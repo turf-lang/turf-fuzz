@@ -1,0 +1,13 @@
+import io;
+fn main(): int {
+    mut a: int = -5;
+    mut s: int = 64;
+    mut n: int = -1;
+    io::printline(a >> s);
+    io::printline(12345 >> s);
+    io::printline(a >> n);
+    mut b: int = 7;
+    b >>= s;
+    io::printline(b);
+    return 0;
+}

@@ -1,0 +1,8 @@
+fn f0(p0: int[2]): int {
+    return p0[0];
+}
+fn main(): int {
+    mut a1: int[3] = [1, 2, 3];
+    mut x: int = f0([a1.length(), 5]);
+    return x;
+}

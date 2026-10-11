@@ -1,0 +1,7 @@
+fn f0(p0: int[2]): int {
+    return p0[0];
+}
+fn main(): int {
+    mut c: int = 3;
+    return f0([(c > 2 give 3 otherwise 4), 5]);
+}

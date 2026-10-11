@@ -1,0 +1,144 @@
+// turf-fuzz gen: seed=5038 paren=min
+import io;
+import list::List;
+
+fn opaque(x: int): int {
+    return x;
+}
+
+fn f0(p0: int[2], p1: int[], p2: int): int {
+    mut chk: int = 0;
+    mut v1: int = -62;
+    mut v2: bool = true;
+    mut l1: List<int> = List::default();
+    mut a1: bool[3] = [v1 == v1 || p2 >= (l1.length() > 0 give l1[-27 % l1.length()] otherwise 0), !v2, -5 > p0[0]];
+    io::printline(v1 + v1 + p0[p0[v1 % 2] % 2] * 39149 >> (((l1.length() > 0 give l1[-19466 % l1.length()] otherwise 0) + p2) * p2 & 63));
+    io::flush();
+    mut a2: int[5] = [v1 << 58, p2, v1 / (8 % 7 + 8), p2 | p1[-60 % p1.length()], v1];
+    for e1 in a1 {
+        l1.push(v1 & (!v2 give a2[3] % -7 otherwise v1));
+        mut v3: bool = p2 + 2 > 2 - p0[-2] || e1 != p2 >= p2 && false;
+    }
+    io::printline(v2);
+    io::flush();
+    return ((v2 give p2 >= v1 otherwise v1 > p2) give -7 << (v1 & 63) otherwise v1) % 5;
+}
+
+fn f1(p0: int): int {
+    mut chk: int = 0;
+    mut v1: int = 3;
+    mut v2: bool = true;
+    mut v3: int = 3;
+    mut v4: int = -3;
+    mut a1: int[3] = [v1, v3 + v3, v1 + p0];
+    mut a2: bool[1] = [!(p0 != v3)];
+    if !(v1 < v3 || p0 == p0) {
+        return p0 / 5;
+    }
+    if a2[v1 % 1] {
+        if !!(p0 <= p0) {
+        }
+        if v1 ^ v3 <= p0 ^ 6 {
+            return (9223372036854775807 >> 0) * 3109485360219860721;
+        }
+        for e1 in a2 {
+            v4 = p0;
+            io::printline(v3);
+            io::flush();
+            v1 = -v1 ^ v1;
+        }
+    }
+    io::printline(f0([v1, -6], a1, v4));
+    io::flush();
+    for (i1, e2) in a2 {
+        mut a3: int[2];
+        a3[-2] = 4 + (v3 % (p0 % 7 + 8) - f0([v1, p0], a1, v3));
+        mut l1: List<int> = List::default();
+    }
+    return a1[v4 % 3] * (p0 - v4) + f0([a2.length(), v1], a1, v1);
+}
+
+fn f2(p0: int[4], p1: int[2], p2: int[1]): int {
+    mut chk: int = 0;
+    mut v1: int = 94;
+    mut v2: int = 4294967296;
+    mut v3: bool = false;
+    mut l1: List<int> = List::default();
+    if !!false || v3 {
+        io::printline((v1 >= v2 ^ v1 give v1 ^ v1 & v2 otherwise v1));
+        io::flush();
+    } else {
+        v1 = v2;
+    }
+    v1 ^= (v1 ^ v2) >> (v2 + v2 & 63);
+    v1 = p0[-2] % p0[(-3 & p2[v1 % 1]) % 4];
+    for r1 in 2..7 {
+        if v3 {
+            mut v4: int = f1(r1) & -9;
+        } elseif v3 {
+        } else {
+            chk = (chk * 31 + (p1[v2 % 2] > r1 give 8 ^ r1 otherwise r1) * r1 % 1000003) % 1000000007;
+            if (-65 > (l1.length() > 0 give l1[v2 % l1.length()] otherwise 0) give (l1.length() > 0 give l1[v2 % l1.length()] otherwise 0) otherwise p2.length()) >= (v3 give r1 otherwise v2) || p0[-83 % 4] < v1 % -7 {
+                mut w1: int[] = p0.copy();
+                v3 = v1 < f0(p1, w1, p1[p2[-70 % 1] % 2]);
+                mut v5: int = -v2 - v2 & v2;
+            }
+            v3 = !(v2 & r1 <= r1 + r1);
+        }
+        v1 = v2 & -7 + (v1 - (l1.length() > 0 give l1[-64 % l1.length()] otherwise 0));
+    }
+    v1--;
+    mut a1: bool[5];
+    a1[-3] = (l1.length() > 0 give l1[v2 % l1.length()] otherwise 0) + v1 < v1 && (-9 < (l1.length() > 0 give l1[v2 % l1.length()] otherwise 0) == true give true && 5 != p1[p1[v2 % 2] % 2] otherwise p1[v1 % 2] == v1 || -5 == p1[v2 % 2]);
+    return (v1 % (p1[v1 % 2] % 7 + 8) << (~v1 & 63)) + p2[v1 % 1];
+}
+
+fn f3(): int {
+    mut chk: int = 0;
+    mut v1: bool = true;
+    mut v2: bool = false;
+    mut v3: int = 65;
+    mut v4: int = 2;
+    mut a1: int[1];
+    a1[0] = (v4 < 3 give -v3 otherwise v3 * v3) - (v3 & v3) * (v4 == v4 give v3 otherwise v3);
+    mut a2: int[5] = [-91 - -3, -v4, v4 * a1.length(), a1[v3 % 1] | v4, v4 + v3];
+    if a2[opaque(v4 & v3)] >= a2[opaque(v3)] / (a1[0] % 7 + 8) {
+        mut v5: int = (f1(-2147483648) == v3 - v4 give v3 otherwise (v4 << (0 & 63)) % (v3 + v3));
+    }
+    v4 = v4 / (v4 % 7 + 8) + -9223372036854775807 - (v4 * 0 | v3 >> 75);
+    v3 -= v4;
+    return (!(v3 > a2[a1[-1] % 5]) give v3 otherwise a1[0]);
+}
+
+fn main(): int {
+    mut chk: int = 0;
+    mut v1: int = 0;
+    mut v2: int = 1;
+    mut v3: int = -8405758406112925622;
+    mut a1: int[2] = [v2, v3];
+    mut a2: int[1] = [v3];
+    mut v4: int = 8 * (v2 << v2);
+    mut v5: int = ~f0(a1, a2, v3);
+    io::printline(v3 <= (!(v2 >= v5) give v5 otherwise v4 << 46));
+    io::flush();
+    mut v6: bool = false && v5 >= v1 && (3037000500 < v1 && v5 != v3);
+    if (9 == -2288 || v5 >= v2) && v1 != v3 || !(v4 <= v3) && (v6 give v1 <= v3 otherwise v6) {
+    } else {
+    }
+    mut a3: int[2] = [v3 - v4, v3 >> 48];
+    v4--;
+    if v2 % -7 * f2([2, a1[v3 % 2], -62, v4], a1, a2) <= 9071305877022965667 + (a1[v3 % 2] == v3 give v3 otherwise v3) {
+    }
+    v4 = ~-(v3 + v1);
+    mut c1: int = 0;
+    while c1 < 3 {
+        c1++;
+        v2 ^= a3[opaque(v5)];
+    }
+    mut v7: int = -(v3 - v3 - (-6 | a3.length()));
+    immut v8: int = v3 / -(v1 - v5);
+    v6 = a3[(v6 give -2351275758573966194 otherwise v7) % 2] != v1;
+    io::printline(chk);
+    io::flush();
+    return v3;
+}
