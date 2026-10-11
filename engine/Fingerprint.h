@@ -23,11 +23,12 @@ inline std::string fingerprint(const turf::AnalysisResult &R) {
   return O.str();
 }
 
-inline turf::AnalysisOptions fuzzOptions(bool Flow) {
+inline turf::AnalysisOptions fuzzOptions(bool Flow, bool Prelude = true) {
   turf::AnalysisOptions Opt;
   Opt.InstallRoot = TURF_FUZZ_ROOT;
   Opt.RunLint = true;
   Opt.RunFlowAnalysis = Flow;
+  Opt.SkipPrelude = !Prelude;
   return Opt;
 }
 

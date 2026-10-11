@@ -10,6 +10,10 @@
 // TURF_FUZZ_CHECK_DETERMINISM=1 analyzes every input twice and aborts if the
 // two results differ: a leak of state between analyses, which would otherwise
 // make every other finding of this engine untrustworthy.
+//
+// The prelude (lib/std/core) is skipped by default: analysing it is nearly
+// all the cost of analysing a small input. TURF_FUZZ_PRELUDE=1 keeps it, for
+// inputs that lean on bare io/math calls or primitive methods.
 
 #include "Fingerprint.h"
 
@@ -19,10 +23,16 @@
 #include <string>
 
 static bool CheckDeterminism = false;
+static bool Prelude = false;
+
+static bool envOn(const char *Name) {
+  const char *E = std::getenv(Name);
+  return E && *E == '1';
+}
 
 extern "C" int LLVMFuzzerInitialize(int *, char ***) {
-  const char *E = std::getenv("TURF_FUZZ_CHECK_DETERMINISM");
-  CheckDeterminism = E && *E == '1';
+  CheckDeterminism = envOn("TURF_FUZZ_CHECK_DETERMINISM");
+  Prelude = envOn("TURF_FUZZ_PRELUDE");
   return 0;
 }
 
@@ -32,7 +42,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *Data, size_t Size) {
   if (Size > 64 * 1024)
     return -1;
   std::string Text(reinterpret_cast<const char *>(Data), Size);
-  static const auto Opt = fuzzOptions(/*Flow=*/true);
+  static const auto Opt = fuzzOptions(/*Flow=*/true, Prelude);
 
   auto R = turf::analyze({{"fuzz.tr", Text}}, Opt);
   if (CheckDeterminism) {
