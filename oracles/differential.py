@@ -51,6 +51,10 @@ COMPILE_TIMEOUT = 120
 RUN_TIMEOUT = 10
 
 PANIC_RE = re.compile(r"panic: runtime check: (.+?) \(([^():]+):(\d+)\)")
+# Stdlib panics (sys::panic) use other shapes: `prog.tr:12: List.pop: ...`
+# with the caller's line, or a bare `List[]: index out of bounds` with none
+# (line 0). See gen/SEMANTICS.md, Output.
+STDLIB_PANIC_RE = re.compile(r"^(?:prog\.tr:(\d+): )?((?:List|Map|Set|Stack|Queue)[\w.\[\]=]*: .+)$", re.M)
 COMPILER_CRASH_RE = re.compile(
     r"Internal compiler error|LLVM ERROR|Assertion .* failed|AddressSanitizer|"
     r"Stack dump|PLEASE submit a bug report|UndefinedBehaviorSanitizer|"
@@ -103,6 +107,9 @@ class Outcome:
             self.kind, self.detail = "exit", (rc,)
         elif rc == -signal.SIGABRT and m:
             self.kind, self.detail = "trap", (m.group(1), int(m.group(3)))
+        elif rc == -signal.SIGABRT and STDLIB_PANIC_RE.search(stderr):
+            s = STDLIB_PANIC_RE.search(stderr)
+            self.kind, self.detail = "trap", (s.group(2), int(s.group(1) or 0))
         else:
             self.kind, self.detail = "signal", (-rc,)
 

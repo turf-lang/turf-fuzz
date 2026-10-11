@@ -1,7 +1,9 @@
 """The generator's own AST and its renderer to Turf source text.
 
 The evaluator (evaluate.py) runs this AST directly; it never parses text.
-Types are the strings "int" and "bool".
+Scalar types are the strings "int" and "bool"; aggregates are StructT, ArrT
+(a sized `T[N]`, a value type), SliceT (`T[]`, a view that shares storage)
+and ListT (`List<T>` from the stdlib).
 
 Rendering assigns `.line` (1-based) to every statement and to every `elseif`
 branch, so the evaluator can predict the `(file:line)` a trap reports.
@@ -17,6 +19,7 @@ PREC = {
     "||": 15, "&&": 20,
     "==": 25, "!=": 25,
     "<": 30, ">": 30, "<=": 30, ">=": 30,
+    "|": 33, "^": 35, "&": 37, "<<": 38, ">>": 38,
     "+": 40, "-": 40,
     "*": 50, "/": 50, "%": 50,
 }
@@ -24,8 +27,100 @@ PREC_UNARY = 70
 PREC_ATOM = 100
 
 ARITH_OPS = ("+", "-", "*", "/", "%")
+BIT_OPS = ("&", "|", "^", "<<", ">>")
+INT_OPS = ARITH_OPS + BIT_OPS
 CMP_OPS = ("<", ">", "<=", ">=")
 EQ_OPS = ("==", "!=")
+
+
+# ---------------------------------------------------------------------- types
+
+class StructT:
+    def __init__(self, name, fields):
+        self.name = name
+        self.fields = fields      # list of (field name, type)
+        self.methods = []         # Method objects, filled in by the generator
+
+    def field_type(self, f):
+        for n, t in self.fields:
+            if n == f:
+                return t
+        raise KeyError(f)
+
+    def __repr__(self):
+        return self.name
+
+
+class ArrT:
+    def __init__(self, elem, n):
+        self.elem, self.n = elem, n
+
+    def __eq__(self, o):
+        return isinstance(o, ArrT) and o.n == self.n and o.elem == self.elem
+
+    def __hash__(self):
+        return hash(("arr", self.n, repr(self.elem)))
+
+    def __repr__(self):
+        return ty_str(self)
+
+
+class SliceT:
+    def __init__(self, elem):
+        self.elem = elem
+
+    def __eq__(self, o):
+        return isinstance(o, SliceT) and o.elem == self.elem
+
+    def __hash__(self):
+        return hash(("slice", repr(self.elem)))
+
+    def __repr__(self):
+        return ty_str(self)
+
+
+class ListT:
+    def __init__(self, elem):
+        self.elem = elem
+
+    def __eq__(self, o):
+        return isinstance(o, ListT) and o.elem == self.elem
+
+    def __hash__(self):
+        return hash(("list", repr(self.elem)))
+
+    def __repr__(self):
+        return ty_str(self)
+
+
+def ty_str(t):
+    if isinstance(t, str):
+        return t
+    if isinstance(t, StructT):
+        return t.name
+    if isinstance(t, ArrT):
+        # int[2][3] is 2 rows of 3: the outer size is written first.
+        dims = []
+        while isinstance(t, ArrT):
+            dims.append(t.n)
+            t = t.elem
+        return ty_str(t) + "".join("[%d]" % d for d in dims)
+    if isinstance(t, SliceT):
+        # The unsized dimension is the outer one: rows of int[3] are int[][3].
+        inner = ty_str(t.elem)
+        cut = inner.find("[")
+        return inner + "[]" if cut < 0 else inner[:cut] + "[]" + inner[cut:]
+    if isinstance(t, ListT):
+        return "List<%s>" % ty_str(t.elem)
+    raise TypeError(t)
+
+
+def is_scalar(t):
+    return t in ("int", "bool")
+
+
+def elem_of(t):
+    return t.elem if isinstance(t, (ArrT, SliceT, ListT)) else None
 
 
 # ---------------------------------------------------------------- expressions
@@ -51,12 +146,12 @@ class Var:
 
 
 class Un:
-    """op is '-' (int) or '!' (bool)."""
+    """op is '-' or '~' (int) or '!' (bool)."""
 
     def __init__(self, op, e):
         self.op = op
         self.e = e
-        self.ty = "int" if op == "-" else "bool"
+        self.ty = "bool" if op == "!" else "int"
 
 
 class Bin:
@@ -64,7 +159,7 @@ class Bin:
         self.op = op
         self.l = l
         self.r = r
-        self.ty = "int" if op in ARITH_OPS else "bool"
+        self.ty = "int" if op in INT_OPS else "bool"
 
 
 class Call:
@@ -85,25 +180,83 @@ class Give:
         self.ty = a.ty
 
 
+class Field:
+    def __init__(self, base, name):
+        self.base, self.name = base, name
+        self.ty = base.ty.field_type(name)
+
+
+class Index:
+    """base[idx] for an array, a slice or a List."""
+
+    def __init__(self, base, idx):
+        self.base, self.idx = base, idx
+        self.ty = base.ty.elem
+
+
+class ArrLit:
+    def __init__(self, ty, elems):
+        self.ty, self.elems = ty, elems
+
+
+class Default:
+    """S::default()"""
+
+    def __init__(self, ty):
+        self.ty = ty
+
+
+class ListNew:
+    """List::default()"""
+
+    def __init__(self, ty):
+        self.ty = ty
+
+
+class Length:
+    ty = "int"
+
+    def __init__(self, base):
+        self.base = base
+
+
+class CopyE:
+    """base.copy(): a fresh T[] on the GC heap."""
+
+    def __init__(self, base):
+        self.base = base
+        self.ty = SliceT(base.ty.elem)
+
+
+class Pop:
+    def __init__(self, base):
+        self.base = base
+        self.ty = base.ty.elem
+
+
 # ----------------------------------------------------------------- statements
 
 class Decl:
+    """mut/immut name: ty = e;   e None means no initializer (zeroed array)."""
+
     def __init__(self, name, ty, e, mutable=True):
         self.name, self.ty, self.e, self.mutable = name, ty, e, mutable
         self.line = 0
 
 
 class Assign:
-    def __init__(self, name, e):
-        self.name, self.e = name, e
+    """place = e;   place is a Var, Field or Index."""
+
+    def __init__(self, place, e):
+        self.place, self.e = place, e
         self.line = 0
 
 
 class Comp:
-    """name op= e   (op in + - * / %)."""
+    """place op= e   (op in + - * / % & | ^ << >>)."""
 
-    def __init__(self, name, op, e):
-        self.name, self.op, self.e = name, op, e
+    def __init__(self, place, op, e):
+        self.place, self.op, self.e = place, op, e
         self.line = 0
 
 
@@ -140,6 +293,36 @@ class While:
         self.incr_line = 0
 
 
+class ForRange:
+    """for var in lo..hi { body }   lo, hi literals."""
+
+    def __init__(self, var, lo, hi, body):
+        self.var, self.lo, self.hi, self.body = var, lo, hi, body
+        self.line = 0
+
+
+class ForEach:
+    """for v in base { body }  or  for (i, v) in base { body }."""
+
+    def __init__(self, ivar, var, base, body):
+        self.ivar, self.var, self.base, self.body = ivar, var, base, body
+        self.line = 0
+
+
+class MethodCall:
+    """recv.method(args);   recv is a place of a struct type."""
+
+    def __init__(self, recv, method, args):
+        self.recv, self.method, self.args = recv, method, args
+        self.line = 0
+
+
+class Push:
+    def __init__(self, base, e):
+        self.base, self.e = base, e
+        self.line = 0
+
+
 class Break:
     def __init__(self):
         self.line = 0
@@ -159,13 +342,25 @@ class Return:
 class Func:
     def __init__(self, name, params, body):
         self.name = name
-        self.params = params  # list of names (all int)
+        self.params = params  # list of (name, type)
         self.body = body      # list of statements, last is Return
         self.cost = 0
 
 
+class Method:
+    """fn S.name(params): void { body }  -- self is a pointer to the receiver."""
+
+    def __init__(self, struct, name, params, body):
+        self.struct = struct
+        self.name = name
+        self.params = params
+        self.body = body
+        self.cost = 0
+
+
 class Program:
-    def __init__(self, funcs, main, seed=0, paren_mode="min"):
+    def __init__(self, structs, funcs, main, seed=0, paren_mode="min"):
+        self.structs = structs
         self.funcs = funcs
         self.main = main
         self.seed = seed
@@ -183,6 +378,29 @@ def _prec(e):
     if isinstance(e, Lit) and e.v < 0:
         return PREC_UNARY
     return PREC_ATOM
+
+
+def walk_stmts(stmts):
+    """Every statement in stmts, nested bodies included."""
+    for s in stmts:
+        yield s
+        if isinstance(s, If):
+            for br in s.branches:
+                yield from walk_stmts(br[1])
+            if s.els:
+                yield from walk_stmts(s.els)
+        elif isinstance(s, (While, ForRange, ForEach)):
+            yield from walk_stmts(s.body)
+
+
+def _uses_list(p):
+    bodies = [f.body for f in p.funcs + [p.main]]
+    bodies += [m.body for st in p.structs for m in st.methods]
+    for b in bodies:
+        for s in walk_stmts(b):
+            if isinstance(s, Decl) and isinstance(s.ty, ListT):
+                return True
+    return False
 
 
 class _Renderer:
@@ -227,6 +445,22 @@ class _Renderer:
             return "%s(%s)" % (e.fn, ", ".join(self.expr(a) for a in e.args))
         if isinstance(e, Give):
             return "(%s give %s otherwise %s)" % (self.expr(e.c), self.expr(e.a), self.expr(e.b))
+        if isinstance(e, Field):
+            return "%s.%s" % (self.expr(e.base, PREC_ATOM), e.name)
+        if isinstance(e, Index):
+            return "%s[%s]" % (self.expr(e.base, PREC_ATOM), self.expr(e.idx))
+        if isinstance(e, ArrLit):
+            return "[%s]" % ", ".join(self.expr(x) for x in e.elems)
+        if isinstance(e, Default):
+            return "%s::default()" % e.ty.name
+        if isinstance(e, ListNew):
+            return "List::default()"
+        if isinstance(e, Length):
+            return "%s.length()" % self.expr(e.base, PREC_ATOM)
+        if isinstance(e, CopyE):
+            return "%s.copy()" % self.expr(e.base, PREC_ATOM)
+        if isinstance(e, Pop):
+            return "%s.pop()" % self.expr(e.base, PREC_ATOM)
         raise TypeError(e)
 
     # -- statements
@@ -241,11 +475,14 @@ class _Renderer:
     def stmt(self, s, ind):
         if isinstance(s, Decl):
             kw = "mut" if s.mutable else "immut"
-            s.line = self.emit(ind, "%s %s: %s = %s;" % (kw, s.name, s.ty, self.expr(s.e)))
+            if s.e is None:
+                s.line = self.emit(ind, "%s %s: %s;" % (kw, s.name, ty_str(s.ty)))
+            else:
+                s.line = self.emit(ind, "%s %s: %s = %s;" % (kw, s.name, ty_str(s.ty), self.expr(s.e)))
         elif isinstance(s, Assign):
-            s.line = self.emit(ind, "%s = %s;" % (s.name, self.expr(s.e)))
+            s.line = self.emit(ind, "%s = %s;" % (self.expr(s.place), self.expr(s.e)))
         elif isinstance(s, Comp):
-            s.line = self.emit(ind, "%s %s= %s;" % (s.name, s.op, self.expr(s.e)))
+            s.line = self.emit(ind, "%s %s= %s;" % (self.expr(s.place), s.op, self.expr(s.e)))
         elif isinstance(s, IncDec):
             s.line = self.emit(ind, "%s%s;" % (s.name, s.op))
         elif isinstance(s, Print):
@@ -257,6 +494,11 @@ class _Renderer:
             s.line = self.emit(ind, "continue;")
         elif isinstance(s, Return):
             s.line = self.emit(ind, "return %s;" % self.expr(s.e))
+        elif isinstance(s, MethodCall):
+            s.line = self.emit(ind, "%s.%s(%s);" % (self.expr(s.recv, PREC_ATOM), s.method,
+                                                    ", ".join(self.expr(a) for a in s.args)))
+        elif isinstance(s, Push):
+            s.line = self.emit(ind, "%s.push(%s);" % (self.expr(s.base, PREC_ATOM), self.expr(s.e)))
         elif isinstance(s, If):
             for i, br in enumerate(s.branches):
                 cond, body, _ = br
@@ -277,23 +519,49 @@ class _Renderer:
             s.incr_line = self.emit(ind + 1, incr)
             self.block(s.body, ind + 1)
             self.emit(ind, "}")
+        elif isinstance(s, ForRange):
+            s.line = self.emit(ind, "for %s in %d..%d {" % (s.var, s.lo, s.hi))
+            self.block(s.body, ind + 1)
+            self.emit(ind, "}")
+        elif isinstance(s, ForEach):
+            head = s.var if s.ivar is None else "(%s, %s)" % (s.ivar, s.var)
+            s.line = self.emit(ind, "for %s in %s {" % (head, self.expr(s.base, PREC_ATOM)))
+            self.block(s.body, ind + 1)
+            self.emit(ind, "}")
         else:
             raise TypeError(s)
+
+    def params(self, ps):
+        return ", ".join("%s: %s" % (n, ty_str(t)) for n, t in ps)
 
     def func(self, f, is_main=False):
         if is_main:
             self.emit(0, "fn main(): int {")
         else:
-            params = ", ".join("%s: int" % p for p in f.params)
-            self.emit(0, "fn %s(%s): int {" % (f.name, params))
+            self.emit(0, "fn %s(%s): int {" % (f.name, self.params(f.params)))
         self.block(f.body, 1)
+        self.emit(0, "}")
+        self.emit(0, "")
+
+    def method(self, m):
+        self.emit(0, "fn %s.%s(%s): void {" % (m.struct.name, m.name, self.params(m.params)))
+        self.block(m.body, 1)
         self.emit(0, "}")
         self.emit(0, "")
 
     def program(self):
         self.emit(0, "// turf-fuzz gen: seed=%d paren=%s" % (self.p.seed, self.p.paren_mode))
         self.emit(0, "import io;")
+        if _uses_list(self.p):
+            self.emit(0, "import list::List;")
         self.emit(0, "")
+        for st in self.p.structs:
+            self.emit(0, "struct %s { %s }" % (st.name, ", ".join(
+                "%s: %s" % (n, ty_str(t)) for n, t in st.fields)))
+            self.emit(0, "")
+        for st in self.p.structs:
+            for m in st.methods:
+                self.method(m)
         for f in self.p.funcs:
             self.func(f)
         self.func(self.p.main, True)

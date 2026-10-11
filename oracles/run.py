@@ -110,13 +110,11 @@ def main():
     ap.add_argument("--findings", default=os.path.join(ROOT, "findings"))
     ap.add_argument("--quick", action="store_true", help="-O0 only (generator debugging)")
     ap.add_argument("--allow-undefined", action="store_true")
-    ap.add_argument("--probe-quirks", action="store_true")
     a = ap.parse_args()
 
     jobs = max(1, min(a.jobs, MAX_JOBS))
     if jobs != a.jobs:
         print("note: --jobs capped at %d" % MAX_JOBS)
-    generate.QUIRK_FILTER = not a.probe_quirks
     if not os.path.exists(D.TURFC):
         sys.exit("compiler not found: %s (set TURF_ROOT or TURFC)" % D.TURFC)
 
