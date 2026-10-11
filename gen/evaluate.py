@@ -182,7 +182,7 @@ class _Machine:
         if 0 <= j < n:
             return j
         if isinstance(obj, LV):
-            self.trap(LIST_SET_OOB if for_set else LIST_GET_OOB, 0)
+            self.trap(LIST_SET_OOB if for_set else LIST_GET_OOB)
         self.trap("Array index out of bounds for '%s'" % array_name(base))
 
     def obj(self, e, env):
@@ -347,14 +347,7 @@ class _Machine:
             env[s.name] = zero(s.ty) if s.e is None else store(self.ev(s.e, env), s.ty)
         elif isinstance(s, Assign):
             p = s.place
-            if isinstance(p, Index) and isinstance(p.base.ty, ListT):
-                # `l[i] = v` is the call `[]=(l, i, v)`: index, value, then check.
-                o = self.obj(p.base, env)
-                i = self.ev(p.idx, env)
-                v = self.ev(s.e, env)
-                put(o.items, self.norm(o, i, p.base, True), v, p.ty)
-                return
-            v = self.ev(s.e, env)  # the value first, then the place
+            v = self.ev(s.e, env)  # the value first, then the place (List too)
             c, k = self.locate(p, env)
             put(c, k, v, p.ty)
         elif isinstance(s, Comp):

@@ -71,7 +71,7 @@ are silent; a disagreement is a finding, not a rule.
 | An index `i` into `N` elements is valid for `-N <= i < N`; a negative index counts from the end, once (no modular wrap). Same rule for `T[N]`, `T[]` and `List`. | doc `arrays.md` ("Negative indices"), `collections.md` |
 | A provably out-of-range constant index into a `T[N]` is a compile error, so the generator indexes a `T[N]` only with a literal in range, `e % N` (always in range, sign of the dividend), or `opaque(e)`, a helper the range analysis cannot see through. A slice is indexed with `0`, `-1` (never empty), `e % s.length()` or `opaque(e)`; a List with `e % l.length()` under a `l.length() > 0` guard, or `opaque(e)`. | doc `arrays.md` ("Bounds checking"); probe (a2.tr) |
 | An out-of-range array index traps `Array index out of bounds for '<name>'`, where `<name>` is the indexed variable, or `array` for any other base (a field, an element). Line: the statement's. | `src/CodegenArray.cpp` ArrayDisplayName; turflang a89bd67 (before it, every `T[N]` said `array`) |
-| An out-of-range List read prints `List[]: index out of bounds`, a write `List[]=: index out of bounds`, both with no location; `pop` on an empty List prints `prog.tr:<line>: List.pop: pop on empty list`. All abort. | probe (l2.tr, l3.tr, l4.tr) |
+| An out-of-range List read prints `prog.tr:<line>: List[]: index out of bounds`, a write `prog.tr:<line>: List[]=: index out of bounds` (turflang 8467172; before it, no location); `pop` on an empty List prints `prog.tr:<line>: List.pop: pop on empty list`. All abort. | probe (l2.tr, l3.tr, l4.tr) |
 
 ## Evaluation order of places
 
@@ -79,7 +79,7 @@ are silent; a disagreement is a finding, not a rule.
 |---|---|---|
 | `a[i] = e`, `s.f[i] = e`, nested places | `e` first, then the indices outer to inner, then the bounds check | probe (o1.tr, o3.tr) |
 | `a[i] op= e` | `e`, then indices, then read-modify-write | probe |
-| `l[i] = e` on a List | `i`, then `e`, then the bounds check (it is the call `[]=(l, i, e)`) | probe (o3.tr) |
+| `l[i] = e` on a List (any `operator []=`) | `e`, then `i`, then the bounds check, like an array | owner decision 2026-10-11 (value first everywhere); doc `operators.md` Assignment. Before, `i` came first |
 | `recv.m(args)` | arguments, then the receiver's indices | probe (o3.tr) |
 | array literal `[e1, e2, ...]` | left to right | probe (o1.tr) |
 
@@ -117,14 +117,8 @@ as roots in locals, so these runs exercise root finding.
 
 ## Open questions
 
-* Element assignment evaluates the value before the index (`a[i] = e`), but
-  a List's `l[i] = e` evaluates the index first, and a method call evaluates
-  its arguments before its receiver. No doc states any of these; they are
-  encoded as probed, and the oracle reports a configuration that differs.
-* List panics have no `panic: runtime check:` prefix, and `l[i]` names no
-  location at all, unlike every compiler-emitted check.
 * Evaluation order is left to right by probe only for operators and call
-  arguments.
-* The docs name only `Division by zero` for `%` (`operators.md`); the
-  compiler says `Modulo by zero`. A doc fix, not a compiler bug.
+  arguments. (Assignment's value-first order is documented: `operators.md`.)
+* List panics use the stdlib's `file:line: message` shape, not the
+  compiler's `panic: runtime check:` one; that is FREEZE F-API-3, not a gap.
 * `-g` alone uses the default optimization level, not `-O0`.
