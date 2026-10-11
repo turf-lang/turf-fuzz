@@ -1,0 +1,11 @@
+import io;
+struct S0 { f0: bool, f1: int, f2: bool[4] }
+fn main(): int {
+    mut a1: S0[3] = [S0::default(), S0::default(), S0::default()];
+    a1[2].f1 = 7;
+    mut w1: S0[] = a1.copy();
+    mut w2: S0[] = a1.copy();
+    w2[1].f1 = 5;
+    io::printline(w1[2].f1 + w2[1].f1 + a1[1].f1);
+    return 0;
+}
