@@ -1,0 +1,9 @@
+import test;
+struct IntBox {
+}
+operator []=(box: &IntBox, index: int, value: int): void {
+    if index == 0 {
+    }
+    mut box: IntBox = IntBox::default();
+    test::assert(box[0] == 10, "operator[] should read field a");
+}

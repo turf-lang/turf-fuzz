@@ -1,0 +1,6 @@
+config: Os
+result: exit 0, stdout 16 bytes
+rc: 0
+--- stdout ---
+140724560349168
+--- stderr ---

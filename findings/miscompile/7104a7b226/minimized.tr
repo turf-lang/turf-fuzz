@@ -1,0 +1,10 @@
+// INT_MIN % -1: -O0 dies on SIGFPE, -O1/-O2/-O3/-Os/-g print stack garbage.
+// `/` has an explicit guard (EmitSignedDivOverflowGuard); `%` does not.
+import io;
+fn main(): int {
+    mut a: int = -9223372036854775807 - 1;
+    mut n: int = -1;
+    io::printline(a % n);
+    io::flush();
+    return 0;
+}

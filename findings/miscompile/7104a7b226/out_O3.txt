@@ -1,0 +1,6 @@
+config: O3
+result: exit 0, stdout 16 bytes
+rc: 0
+--- stdout ---
+140731405420176
+--- stderr ---

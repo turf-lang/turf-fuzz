@@ -1,0 +1,6 @@
+config: O2
+result: exit 0, stdout 16 bytes
+rc: 0
+--- stdout ---
+140721515892064
+--- stderr ---

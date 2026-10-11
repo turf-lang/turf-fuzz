@@ -1,0 +1,15 @@
+{
+  "class": "miscompile",
+  "signature": "miscompile O0,O0+gcstress,O0+gcstress+gcvalidate,O0+gcvalidate=signal(8,) | O1,O2,O3,Os,g=exit(0,) evaluator-agrees=",
+  "summary": "{O0,O0+gcstress,O0+gcstress+gcvalidate,O0+gcvalidate}: signal 8 (SIGFPE), stdout 0 bytes vs {O1}: exit 0, stdout 16 bytes vs {O2}: exit 0, stdout 16 bytes vs {O3}: exit 0, stdout 16 bytes vs {Os}: exit 0, stdout 16 bytes vs {g}: exit 0, stdout 16 bytes",
+  "note": "",
+  "seed": null,
+  "last_seed": 0,
+  "count": 1,
+  "compiler_lock_commit": "8a4d754eaa7d4b5e8c017fef3cf5d02afada45b2",
+  "compiler_tree_head": "8a4d754eaa7d4b5e8c017fef3cf5d02afada45b2",
+  "turfc_version": "turfc 2.0.0-dev | interface 1.5 | llvm 22.1.8 | runtime turf_rt_abi_2_0 | root /home/a2ys/turflang/turflang | linker system-cc | smart built-in",
+  "found": "2026-10-11T20:30:55",
+  "reproduce": "cd <dir>; turfc prog.tr -o a -O0 && ./a   (SIGFPE);  -O2 prints garbage",
+  "status": "minimized by hand (6 lines); found while probing semantics, not by the loop (the loop skips this shape)"
+}

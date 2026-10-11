@@ -1,0 +1,9 @@
+// E076 on a valid program: INT_MIN literal as the left operand of + (also * and -,
+// and `1 + -9223372036854775808`), but `c + -9223372036854775808` is accepted.
+import io;
+fn main(): int {
+    mut c: int = 1;
+    io::printline(-9223372036854775808 + c);
+    io::flush();
+    return 0;
+}

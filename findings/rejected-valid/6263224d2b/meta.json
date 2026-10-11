@@ -1,0 +1,15 @@
+{
+  "class": "rejected-valid",
+  "signature": "rejected E076 Integer literal is not representable in type 'int'.",
+  "summary": "prog.tr rejected at O0: E076 Integer literal is not representable in type 'int'.",
+  "note": "",
+  "seed": 100102,
+  "last_seed": 100102,
+  "count": 1,
+  "compiler_lock_commit": "8a4d754eaa7d4b5e8c017fef3cf5d02afada45b2",
+  "compiler_tree_head": "8a4d754eaa7d4b5e8c017fef3cf5d02afada45b2",
+  "turfc_version": "turfc 2.0.0-dev | interface 1.5 | llvm 22.1.8 | runtime turf_rt_abi_2_0 | root /home/a2ys/turflang/turflang | linker system-cc | smart built-in",
+  "found": "2026-10-11T20:25:13",
+  "reproduce": "python3 oracles/differential.py 100102",
+  "status": "minimized by hand (minimized.tr); possibly the documented OVH-014 literal-leaf narrowing -- see SEMANTICS.md"
+}

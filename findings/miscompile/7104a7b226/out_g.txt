@@ -1,0 +1,6 @@
+config: g
+result: exit 0, stdout 16 bytes
+rc: 0
+--- stdout ---
+140727790888160
+--- stderr ---

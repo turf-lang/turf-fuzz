@@ -1,0 +1,16 @@
+rc: 1
+[1m[96mprog.tr[0m [90m(1 error)[0m
+
+[1m[91mââ error [0m[90mat line 135, col 37 [E076 Â· arithmetic][0m
+
+  [91mInteger literal is not representable in type '[36mint[91m'.
+[0m  The literal's value is [36m9223372036854775808[0m.
+  'int' holds -9223372036854775808 .. 9223372036854775807.
+
+  [92mHint: 'int' is TurfLang's only general-purpose integer type; there is no wider one. If you need arbitrary precision, use a library type.[0m
+
+[90m  135 â [0m            mut v8: int = 9 + (1 + -9223372036854775808 + v3 / (v1 % 7 + 8));
+[90m      â [0m                                    [1m[91m^~~~~~~~~~~~~~~~~~~ Here![0m
+
+  [90mRun `turf --explain E076` for more details.[0m
+

@@ -1,0 +1,2 @@
+outcome: trap Integer overflow line 44
+--- stdout ---

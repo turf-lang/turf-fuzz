@@ -1,0 +1,5 @@
+config: O0+gcstress
+result: signal 8 (SIGFPE), stdout 0 bytes
+rc: -8
+--- stdout ---
+--- stderr ---
