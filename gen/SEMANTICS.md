@@ -12,7 +12,7 @@ are silent; a disagreement is a finding, not a rule.
 | Rule | Source |
 |---|---|
 | `int` is 64-bit signed. `bool` is a distinct type; `&&`, `\|\|`, `!` yield `bool`. | doc `docs/reference/variables_and_types.md`; `FREEZE.md` 6.2 |
-| Generated types: `int`, `bool`, structs, sized arrays `T[N]` (also 2-D), `T[]` (parameters and `.copy()` locals), `List<T>` (locals; `List<int>` also as a helper parameter). `int32`, `double`, `char`, `string`, enums, pointers, generics other than `List` are out of subset. | scope |
+| Generated types: `int`, `bool`, `string` (locals, struct fields, array and List elements), structs, sized arrays `T[N]` (also 2-D), `T[]` (parameters and `.copy()` locals), `List<T>` (locals; `List<int>` also as a helper parameter). `int32`, `double`, `char` (only as `s[i] to int`), enums, pointers, generics other than `List` are out of subset. | scope |
 | Every local is initialized at declaration, except `mut a: T[N];`, which the generator always follows at once with one element write (see Aggregates, definite assignment). | doc `FREEZE.md` F-INIT-1 |
 | Declaration needs an explicit `: Type`; `mut`/`immut` forms are used. `immut` is only generated for a scalar with a non-literal-only initializer (see constant folding). Aggregates are always `mut`. | doc variables_and_types.md |
 
@@ -63,6 +63,26 @@ are silent; a disagreement is a finding, not a rule.
 | `l[i]` reads by value; `l[i] = v` writes. A List element is never a place for a field write, a method call or a compound assignment (E098, E126). | doc `collections.md`; probe |
 | `for v in a` iterates the elements of an array or slice live (a write by the body to a later element is seen), over the length at loop start. `for (i, v) in a` also binds the index. | probe (o3.tr) |
 | `for i in lo..hi` runs `lo, lo+1, ..., hi-1`; `hi` is evaluated once. The generator uses literal bounds. | doc `control_flow.md`; probe (o3.tr) |
+
+## Strings
+
+All generated strings are ASCII from a small alphabet (`a b A Z 0 9`, space,
+tab, newline, `.`, `-`), so byte order, code-point order and Python's `str`
+agree.
+
+| Rule | Source |
+|---|---|
+| A `string` is an immutable value: assignment, parameters, fields and elements may share its bytes, which is never observable because the generator never writes `s[i]`. `S::default()` gives a `string` field (also nested, also in a fixed array field) `""`. | doc `variables_and_types.md` default table; turflang 2cd5a20 (nested defaults were null before); probe (z2.tr) |
+| `a + b` concatenates (strings.tr `operator +`); `s += t` is `s = s + t`. | doc `operators.md`, `FREEZE.md` 6.7 (compound assignment desugars); probe |
+| `== != < > <= >=` compare with `strcmp`, i.e. byte order. | `lib/std/core/strings.tr` operators |
+| `(n to string)` is the decimal form, `-` for negatives, `INT_MIN` included. | probe (s1.tr) |
+| `s[i]` is a `char`; `(s[i] to int)` is its byte. Valid for `-n <= i < n`, a negative index counting from the end once; outside, `panic: runtime check: String index out of bounds (file:line)`. The generator reads `s[e % n]` under an `n > 0` guard, or `s[opaque(e)]`. | doc `operators.md` ("A negative index counts back from the end"); probe (s2.tr). **`FREEZE.md` §6.14 F-STR-1 still says `i < 0` panics**: stale since turflang 2853007 (#256), reported to the owner |
+| `strings::length`, `index_of` (`""` found at 0; else Python `find`), `last_index_of` (`""` at `length`; else `rfind`), `count_char(s, code)`, `contains`, `starts_with`, `ends_with`. | `strings.tr` |
+| `repeat(s, n)` is `""` for `n <= 0`; the generator uses `n` in -1..3. `replace(s, "", t)` is `s`; otherwise non-overlapping, left to right (Python `replace`). `to_upper`/`to_lower` map ASCII letters only. `trim`, `trim_start`, `trim_end` remove only space, tab, newline and carriage return. | `strings.tr` |
+| `substring(s, a, b)` is bytes `a..b`; `a < 0`, `b < a` or `b > length` panics `prog.tr:<line>: strings.substring: index out of bounds` with the caller's line (F-API-3). The generator guards it, except for a few deliberate raw ranges. | `strings.tr`; probe (s3.tr) |
+| `io::printline(string)` prints the bytes and `\n`. | doc `io_and_net.md` |
+| The evaluator gives up on a program (regenerates it) once a string passes 4096 bytes, since `s = s + s` in nested loops grows without bound. | scope |
+| **Never generated: `mut a: string[N];`** (or any zero-filled declaration holding a string). An element read before it is written is a null pointer, not `""`, and `a[1].length()` segfaults. Same family as the array-element `&U` hole, an open turflang issue (owner, 2026-10-12: separate from LEC-009). | probe (z1.tr) |
 
 ## Indexing
 

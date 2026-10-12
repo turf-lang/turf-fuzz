@@ -24,13 +24,20 @@ from tast import (INT_MIN, INT_MAX, StructT, ArrT, SliceT, ListT, Lit, BLit,
                   Var, Un, Bin, Call, Give, Field, Index, ArrLit, Default,
                   ListNew, Length, CopyE, Pop, Decl, Assign, Comp, IncDec,
                   Print, If, While, ForRange, ForEach, MethodCall, Push, Break,
-                  Continue, Return)
+                  Continue, Return, SLit, SCall, ToStr, CharAt)
 
 STEP_LIMIT = 3_000_000
+# A string longer than this ends the program as a Timeout (it is regenerated):
+# `s = s + s` in nested loops would otherwise grow without bound.
+STRING_LIMIT = 4096
 
 LIST_GET_OOB = "List[]: index out of bounds"
 LIST_SET_OOB = "List[]=: index out of bounds"
 LIST_POP_EMPTY = "List.pop: pop on empty list"
+SUBSTRING_OOB = "strings.substring: index out of bounds"
+STRING_INDEX_OOB = "String index out of bounds"
+# strings.tr trim(): space, tab, newline, carriage return only.
+TRIM_SET = " \t\n\r"
 
 
 class Undefined(Exception):
@@ -137,6 +144,8 @@ def zero(ty):
         return 0
     if ty == "bool":
         return False
+    if ty == "string":
+        return ""
     if isinstance(ty, StructT):
         return SV({n: zero(t) for n, t in ty.fields})
     if isinstance(ty, ArrT):
@@ -251,7 +260,66 @@ class _Machine:
             if not lv.items:
                 self.trap(LIST_POP_EMPTY)
             return lv.items.pop()
+        if isinstance(e, SLit):
+            return e.v
+        if isinstance(e, ToStr):
+            return str(self.ev(e.e, env))
+        if isinstance(e, CharAt):
+            s = self.ev(e.base, env)
+            i = self.ev(e.idx, env)
+            n = len(s)
+            j = i + n if i < 0 else i  # wraps once, operators.md
+            if not 0 <= j < n:
+                self.trap(STRING_INDEX_OOB)
+            return ord(s[j])
+        if isinstance(e, SCall):
+            args = [self.ev(a, env) for a in e.args]  # left to right
+            return self.string_fn(e.fn, args)
         raise TypeError(e)
+
+    def string_fn(self, fn, a):
+        """lib/std/core/strings.tr, on ASCII-only strings (SEMANTICS.md)."""
+        s = a[0]
+        if fn == "length":
+            return len(s)
+        if fn == "index_of":
+            return s.find(a[1])        # "" is found at 0
+        if fn == "last_index_of":
+            return s.rfind(a[1])       # "" is found at len(s)
+        if fn == "count_char":
+            return sum(1 for c in s if ord(c) == a[1])
+        if fn == "contains":
+            return a[1] in s
+        if fn == "starts_with":
+            return s.startswith(a[1])
+        if fn == "ends_with":
+            return s.endswith(a[1])
+        if fn == "repeat":
+            return self.sized(s * a[1] if a[1] > 0 else "")
+        if fn == "substring":
+            st, en = a[1], a[2]
+            if st < 0 or en < st or en > len(s):
+                self.trap(SUBSTRING_OOB)
+            return s[st:en]
+        if fn == "replace":
+            return s if a[1] == "" else self.sized(s.replace(a[1], a[2]))
+        if fn == "to_upper":
+            return "".join(chr(ord(c) - 32) if "a" <= c <= "z" else c for c in s)
+        if fn == "to_lower":
+            return "".join(chr(ord(c) + 32) if "A" <= c <= "Z" else c for c in s)
+        if fn == "trim":
+            return s.strip(TRIM_SET)
+        if fn == "trim_start":
+            return s.lstrip(TRIM_SET)
+        if fn == "trim_end":
+            return s.rstrip(TRIM_SET)
+        raise ValueError(fn)
+
+    @staticmethod
+    def sized(s):
+        if len(s) > STRING_LIMIT:
+            raise Timeout()
+        return s
 
     def binary(self, e, env):
         op = e.op
@@ -264,6 +332,13 @@ class _Machine:
         return self.apply(op, a, b)
 
     def apply(self, op, a, b, compound=False):
+        if isinstance(a, str):
+            if op == "+":
+                return self.sized(a + b)
+            # Comparisons are strcmp: byte order, which is code-point order
+            # for ASCII.
+            return {"==": a == b, "!=": a != b, "<": a < b, ">": a > b,
+                    "<=": a <= b, ">=": a >= b}[op]
         if op == "+":
             r = a + b
         elif op == "-":
@@ -363,9 +438,12 @@ class _Machine:
             env[s.name] = self.apply("+" if s.op == "++" else "-", env[s.name], 1)
         elif isinstance(s, Print):
             v = self.ev(s.e, env)
-            if isinstance(v, bool):
-                v = 1 if v else 0
-            self.out.append("%d\n" % v)
+            if isinstance(v, str):
+                self.out.append(v + "\n")
+            else:
+                if isinstance(v, bool):
+                    v = 1 if v else 0
+                self.out.append("%d\n" % v)
         elif isinstance(s, MethodCall):
             args = [self.ev(a, env) for a in s.args]  # arguments, then receiver
             recv = self.obj(s.recv, env)

@@ -1,7 +1,7 @@
 """The generator's own AST and its renderer to Turf source text.
 
 The evaluator (evaluate.py) runs this AST directly; it never parses text.
-Scalar types are the strings "int" and "bool"; aggregates are StructT, ArrT
+Scalar types are the strings "int", "bool" and "string"; aggregates are StructT, ArrT
 (a sized `T[N]`, a value type), SliceT (`T[]`, a view that shares storage)
 and ListT (`List<T>` from the stdlib).
 
@@ -116,7 +116,19 @@ def ty_str(t):
 
 
 def is_scalar(t):
-    return t in ("int", "bool")
+    """A value with no parts to place into: int, bool and string (immutable,
+    so sharing its storage is never observable)."""
+    return t in ("int", "bool", "string")
+
+
+def contains_string(t):
+    if t == "string":
+        return True
+    if isinstance(t, StructT):
+        return any(contains_string(ft) for _, ft in t.fields)
+    if isinstance(t, (ArrT, SliceT, ListT)):
+        return contains_string(t.elem)
+    return False
 
 
 def elem_of(t):
@@ -159,7 +171,52 @@ class Bin:
         self.op = op
         self.l = l
         self.r = r
-        self.ty = "int" if op in INT_OPS else "bool"
+        if op == "+" and l.ty == "string":
+            self.ty = "string"  # strings.tr `operator +`
+        else:
+            self.ty = "int" if op in INT_OPS else "bool"
+
+
+class SLit:
+    """A string literal; v holds only printable ASCII, tab and newline."""
+    ty = "string"
+
+    def __init__(self, v):
+        self.v = v
+
+
+class SCall:
+    """strings::fn(args) with result type ty (STRING_FNS)."""
+
+    def __init__(self, fn, args):
+        self.fn, self.args = fn, args
+        self.ty = STRING_FNS[fn]
+
+
+class ToStr:
+    """(e to string) for an int e."""
+    ty = "string"
+
+    def __init__(self, e):
+        self.e = e
+
+
+class CharAt:
+    """(s[i] to int): one byte of a string as its code."""
+    ty = "int"
+
+    def __init__(self, base, idx):
+        self.base, self.idx = base, idx
+
+
+# The strings:: functions the generator calls, with their result types.
+STRING_FNS = {
+    "length": "int", "index_of": "int", "last_index_of": "int",
+    "count_char": "int", "contains": "bool", "starts_with": "bool",
+    "ends_with": "bool", "repeat": "string", "substring": "string",
+    "replace": "string", "to_upper": "string", "to_lower": "string",
+    "trim": "string", "trim_start": "string", "trim_end": "string",
+}
 
 
 class Call:
@@ -468,6 +525,14 @@ class _Renderer:
             return "%s.copy()" % self.expr(e.base, PREC_ATOM)
         if isinstance(e, Pop):
             return "%s.pop()" % self.expr(e.base, PREC_ATOM)
+        if isinstance(e, SLit):
+            return '"%s"' % e.v.replace("\t", "\\t").replace("\n", "\\n")
+        if isinstance(e, SCall):
+            return "strings::%s(%s)" % (e.fn, ", ".join(self.expr(a) for a in e.args))
+        if isinstance(e, ToStr):
+            return "(%s to string)" % self.expr(e.e, PREC_ATOM)
+        if isinstance(e, CharAt):
+            return "(%s[%s] to int)" % (self.expr(e.base, PREC_ATOM), self.expr(e.idx))
         raise TypeError(e)
 
     # -- statements

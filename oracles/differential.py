@@ -54,7 +54,7 @@ PANIC_RE = re.compile(r"panic: runtime check: (.+?) \(([^():]+):(\d+)\)")
 # Stdlib panics (sys::panic) use other shapes: `prog.tr:12: List.pop: ...`
 # with the caller's line, or a bare `List[]: index out of bounds` with none
 # (line 0). See gen/SEMANTICS.md, Output.
-STDLIB_PANIC_RE = re.compile(r"^(?:prog\.tr:(\d+): )?((?:List|Map|Set|Stack|Queue)[\w.\[\]=]*: .+)$", re.M)
+STDLIB_PANIC_RE = re.compile(r"^(?:prog\.tr:(\d+): )?((?:List|Map|Set|Stack|Queue|strings)[\w.\[\]=]*: .+)$", re.M)
 COMPILER_CRASH_RE = re.compile(
     r"Internal compiler error|LLVM ERROR|Assertion .* failed|AddressSanitizer|"
     r"Stack dump|PLEASE submit a bug report|UndefinedBehaviorSanitizer|"

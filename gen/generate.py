@@ -10,7 +10,12 @@ Subset:
   * sized arrays `T[N]` (literals, zeroed declarations, element reads and
     writes, copies, `.length()`, for-each), `T[]` parameters that write
     through to the caller's array, and `.copy()` views on the GC heap;
-  * `List<T>` locals (push, guarded index read and write, pop, length);
+  * `List<T>` locals (push, guarded index read and write, pop, length),
+    shared through aliases and List<int> parameters, `.copy()`;
+  * `string` locals, fields and elements: literals, `+`, `+=`, `to string`,
+    comparisons, `s[i] to int`, and strings:: length, index_of,
+    last_index_of, count_char, contains, starts_with, ends_with, repeat,
+    substring, replace, to_upper, to_lower, trim, trim_start, trim_end;
   * if/elseif/else, while with a bounded counter, `for i in a..b`,
     break/continue, helper functions returning int (calls only go to
     earlier functions, so no recursion), early return, printing.
@@ -34,7 +39,8 @@ from tast import (INT_MIN, INT_MAX, StructT, ArrT, SliceT, ListT, is_scalar,  # 
                   Lit, BLit, Var, Un, Bin, Call, Give, Field, Index, ArrLit,
                   Default, ListNew, Length, CopyE, Pop, Decl, Assign, Comp,
                   IncDec, Print, If, While, ForRange, ForEach, MethodCall,
-                  Push, Break, Continue, Return, Func, Method, Program)
+                  Push, Break, Continue, Return, Func, Method, Program,
+                  SLit, SCall, ToStr, CharAt, contains_string)
 import evaluate as ev  # noqa: E402
 
 BOUNDARY = [INT_MAX, INT_MIN, INT_MAX - 1, INT_MIN + 1, 2147483647, -2147483648,
@@ -150,7 +156,18 @@ def const_value_safe(e):
 
 def check_foldable(e):
     """Raise Overflow if any literal-only subtree of e would fold out of range."""
-    if isinstance(e, (Lit, BLit, Var, Default, ListNew)):
+    if isinstance(e, (Lit, BLit, SLit, Var, Default, ListNew)):
+        return
+    if isinstance(e, SCall):
+        for a in e.args:
+            check_foldable(a)
+        return
+    if isinstance(e, ToStr):
+        check_foldable(e.e)
+        return
+    if isinstance(e, CharAt):
+        check_foldable(e.base)
+        check_foldable(e.idx)
         return
     if isinstance(e, Un):
         check_foldable(e.e)
@@ -193,6 +210,9 @@ class Gen:
         self.use_structs = r.random() < 0.5
         self.use_arrays = r.random() < 0.5
         self.use_lists = r.random() < 0.35
+        # Strings: GC-heavy (every +, to string and strings:: result is a new
+        # GC block), also as struct fields and array/List elements.
+        self.use_strings = r.random() < 0.4
         self.structs = []
         self.funcs = []
         self.opaque_used = False
@@ -225,11 +245,11 @@ class Gen:
             for j in range(self.rng.randint(1, 4)):
                 k = self.rng.random()
                 if k < 0.45:
-                    t = "int"
+                    t = "string" if self.use_strings and self.chance(0.3) else "int"
                 elif k < 0.62:
                     t = "bool"
                 elif k < 0.80:
-                    t = ArrT(self.pick(["int", "int", "int", "bool"]), self.rng.randint(1, 4))
+                    t = ArrT(self.elem_type(), self.rng.randint(1, 4))
                 elif k < 0.95 and self.structs:
                     t = self.pick(self.structs)
                 elif self.structs:
@@ -238,6 +258,19 @@ class Gen:
                     t = "int"
                 fields.append(("f%d" % j, t))
             self.structs.append(StructT("S%d" % i, fields))
+
+    def elem_type(self):
+        opts = ["int", "int", "int", "bool"]
+        if self.use_strings:
+            opts.append("string")
+        return self.pick(opts)
+
+    def scalar_type(self):
+        """The type of a new scalar local."""
+        k = self.rng.random()
+        if self.use_strings and k < 0.25:
+            return "string"
+        return "int" if self.chance(0.75) else "bool"
 
     def agg_type(self):
         """A type for a new aggregate local."""
@@ -260,11 +293,13 @@ class Gen:
         if k == "list":
             if self.structs and self.chance(0.25):
                 return ListT(self.pick(self.structs))
+            if self.use_strings and self.chance(0.3):
+                return ListT("string")
             return ListT("int")
         n = self.rng.randint(1, 5)
         if self.chance(0.1):
             return ArrT(ArrT("int", self.rng.randint(1, 3)), n)
-        return ArrT(self.pick(["int", "int", "int", "bool"]), n)
+        return ArrT(self.elem_type(), n)
 
     # ----------------------------------------------------------- places
     def roots(self, writable):
@@ -367,7 +402,7 @@ class Gen:
             return None
         if isinstance(idx, Call):
             return got  # may be out of bounds on purpose
-        zero = Lit(0) if target == "int" else BLit(False)
+        zero = {"int": Lit(0), "bool": BLit(False), "string": SLit("")}[target]
         return Give(Bin(">", Length(lv), Lit(0)), got, zero)
 
     # ----------------------------------------------------------- expressions
@@ -419,6 +454,87 @@ class Gen:
             return Var(n, "bool")
         return BLit(self.chance(0.5))
 
+    # ---------------------------------------------------------------- strings
+    # A small alphabet, so that searches, replaces and comparisons often
+    # match; whitespace from trim's set (space, tab, newline) is included.
+    ALPHA = "aabbab AZ09\t\n.-"
+
+    def str_literal(self):
+        n = self.pick([0, 1, 1, 2, 2, 3, 4, 5])
+        return SLit("".join(self.pick(self.ALPHA) for _ in range(n)))
+
+    def str_leaf(self, depth=0):
+        if self.chance(0.25):
+            got = self.agg_read("string", depth)
+            if got is not None:
+                return got
+        vs = self.scope.vars("string")
+        if vs and self.chance(0.65):
+            return Var(self.pick(vs)[0], "string")
+        return self.str_literal()
+
+    def gen_str(self, depth):
+        if depth <= 0:
+            return self.str_leaf()
+        k = self.rng.random()
+        if k < 0.25:
+            return self.str_leaf(depth)
+        if k < 0.45:
+            return Bin("+", self.gen_str(depth - 1), self.gen_str(depth - 1))
+        if k < 0.52:
+            return ToStr(self.gen_int(depth - 1))
+        if k < 0.57:
+            n = Lit(self.rng.randint(-1, 3))
+            return SCall("repeat", [self.gen_str(depth - 1), n])
+        if k < 0.70:
+            return self.substring(depth)
+        if k < 0.78:
+            return SCall("replace", [self.gen_str(depth - 1), self.str_literal(),
+                                     self.str_leaf()])
+        if k < 0.92:
+            fn = self.pick(["to_upper", "to_lower", "trim", "trim_start", "trim_end"])
+            return SCall(fn, [self.gen_str(depth - 1)])
+        return Give(self.gen_bool(depth - 1), self.gen_str(depth - 1), self.gen_str(depth - 1))
+
+    def substring(self, depth):
+        """strings::substring, panicking when the range is outside the string
+        (start < 0, end < start or end > length). The base is a leaf because it
+        is named twice: once to cut, once for its length."""
+        b = self.str_leaf()
+        if self.chance(self.opaque_p * 4):
+            lo, hi = self.rng.randint(-1, 3), self.rng.randint(-1, 6)
+            return SCall("substring", [b, Lit(lo), Lit(hi)])  # may panic
+        k = self.rng.randint(0, 2)
+        cut = SCall("substring", [b, Lit(k), SCall("length", [b])])
+        return Give(Bin(">=", SCall("length", [b]), Lit(k)), cut, b)
+
+    def string_int(self, depth):
+        """An int computed from strings."""
+        k = self.rng.random()
+        if k < 0.35:
+            return SCall("length", [self.gen_str(depth - 1)])
+        if k < 0.55:
+            fn = self.pick(["index_of", "last_index_of"])
+            return SCall(fn, [self.gen_str(depth - 1), self.str_leaf()])
+        if k < 0.70:
+            ch = ord(self.pick(self.ALPHA))
+            return SCall("count_char", [self.gen_str(depth - 1), Lit(ch)])
+        # One byte: `% length` is in (-n, n), and a negative index wraps once
+        # (operators.md), so the guarded read is always in range.
+        b = self.str_leaf()
+        if self.chance(self.opaque_p * 3):
+            self.opaque_used = True
+            return CharAt(b, Call("opaque", [self.gen_int(max(depth - 1, 0))]))
+        idx = Bin("%", self.gen_int(max(depth - 1, 0)), SCall("length", [b]))
+        return Give(Bin(">", SCall("length", [b]), Lit(0)), CharAt(b, idx), Lit(-1))
+
+    def string_bool(self, depth):
+        if self.chance(0.55):
+            op = self.pick(["==", "!=", "<", ">", "<=", ">="])
+            return Bin(op, self.gen_str(depth - 1), self.gen_str(depth - 1))
+        fn = self.pick(["contains", "starts_with", "ends_with"])
+        return SCall(fn, [self.gen_str(depth - 1), self.str_leaf()])
+
     def shrink(self, e):
         """In tame mode keep a multiplication operand small."""
         if not self.tame:
@@ -449,6 +565,8 @@ class Gen:
         r = self.rng
         if depth <= 0:
             return self.int_leaf()
+        if self.use_strings and self.chance(0.08):
+            return self.string_int(depth)
         k = r.random()
         if k < 0.30:
             return self.int_leaf(depth)
@@ -482,6 +600,8 @@ class Gen:
         r = self.rng
         if depth <= 0:
             return self.bool_leaf() if self.chance(0.4) else self.compare(0)
+        if self.use_strings and self.chance(0.12):
+            return self.string_bool(depth)
         k = r.random()
         if k < 0.15:
             return self.bool_leaf(depth)
@@ -505,6 +625,8 @@ class Gen:
             return self.gen_int(depth)
         if t == "bool":
             return self.gen_bool(depth)
+        if t == "string":
+            return self.gen_str(depth)
         if isinstance(t, StructT):
             if self.chance(0.6):
                 got = self.place(t, "read", depth)
@@ -592,6 +714,8 @@ class Gen:
             return Lit(self.rng.randint(-9, 9))
         if ty == "bool":
             return BLit(True)
+        if ty == "string":
+            return SLit("")
         return None
 
     def int_expr(self, depth=3):
@@ -600,11 +724,16 @@ class Gen:
     def bool_expr(self, depth=3):
         return self.expr_ok(lambda: self.gen_bool(depth), "bool")
 
+    def str_expr(self, depth=2):
+        return self.expr_ok(lambda: self.gen_str(depth), "string")
+
     def value_expr(self, t, depth=2):
         if t == "int":
             return self.int_expr(depth + 1)
         if t == "bool":
             return self.bool_expr(depth + 1)
+        if t == "string":
+            return self.str_expr(depth)
         return self.expr_ok(lambda: self.gen_value(t, depth), t)
 
     # ------------------------------------------------------------ statements
@@ -694,13 +823,20 @@ class Gen:
         return [s] if s else None
 
     def print_stmt(self):
+        if self.use_strings and self.chance(0.3):
+            return Print(self.str_expr(3))
         if self.chance(0.75):
             return Print(self.int_expr(3))
         return Print(self.bool_expr(3))
 
+    def scalar_expr(self, ty, depth=3):
+        if ty == "string":
+            return self.str_expr(depth)
+        return self.int_expr(depth) if ty == "int" else self.bool_expr(depth)
+
     def gen_decl(self):
-        ty = "int" if self.chance(0.75) else "bool"
-        e = self.int_expr(3) if ty == "int" else self.bool_expr(3)
+        ty = self.scalar_type()
+        e = self.scalar_expr(ty)
         kind = MUT
         if self.chance(0.2) and const_value_safe(e) is None:
             kind = IMMUT  # immut with a non-constant initializer
@@ -724,9 +860,11 @@ class Gen:
             name = self.new_name("l")
             self.scope.declare(name, t, MUT)
             return [Decl(name, t, init)]
-        if isinstance(t, ArrT) and self.chance(0.2):
+        if isinstance(t, ArrT) and not contains_string(t) and self.chance(0.2):
             # `mut a: int[3];` is zero-filled, but definite assignment (F-INIT-1)
             # counts the whole array unassigned until one element is written.
+            # Not with strings: an unwritten `string` element is a null
+            # pointer, not "" (open turflang issue, SEMANTICS.md).
             first = self.value_expr(t.elem, 2)
             if first is None:
                 return None
@@ -759,13 +897,14 @@ class Gen:
         if not vs:
             return None
         name, ty = self.pick(vs)
-        e = self.int_expr(3) if ty == "int" else self.bool_expr(3)
-        return Assign(Var(name, ty), e)
+        return Assign(Var(name, ty), self.scalar_expr(ty))
 
     def agg_assign(self):
         """Assignment into a field or element, or of a whole aggregate."""
         k = self.rng.random()
-        target = "int" if k < 0.5 else "bool" if k < 0.65 else None
+        target = "int" if k < 0.45 else "bool" if k < 0.58 else None
+        if target is None and self.use_strings and k < 0.68:
+            target = "string"
         if target is None:
             types = [e.ty for e in self.roots(True)
                      if isinstance(e.ty, (StructT, ArrT))]
@@ -810,6 +949,14 @@ class Gen:
         return self.pick(ops)
 
     def gen_comp(self):
+        if self.use_strings and self.chance(0.2):
+            # `s += t` desugars to `s = s + t` (strings.tr `operator +`).
+            p = self.place("string", "assign") if self.has_aggs() else None
+            if p is None:
+                vs = self.scope.vars("string", True)
+                p = Var(self.pick(vs)[0], "string") if vs else None
+            if p is not None:
+                return Comp(p, "+", self.str_expr(1))
         if self.has_aggs() and self.chance(0.3):
             p = self.place("int", "assign")
         else:
@@ -1006,8 +1153,9 @@ class Gen:
     def initial_vars(self):
         out = []
         for _ in range(self.rng.randint(2, 4)):
-            ty = "int" if self.chance(0.75) else "bool"
-            e = self.literal() if ty == "int" else BLit(self.chance(0.5))
+            ty = self.scalar_type()
+            e = (self.literal() if ty == "int" else BLit(self.chance(0.5))
+                 if ty == "bool" else self.str_literal())
             name = self.new_name("v")
             self.scope.declare(name, ty, MUT)
             out.append(Decl(name, ty, e, True))
