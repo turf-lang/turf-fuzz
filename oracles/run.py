@@ -26,6 +26,7 @@ from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(ROOT, "gen"))
 
 import differential as D  # noqa: E402
 import generate  # noqa: E402
@@ -110,6 +111,9 @@ def main():
     ap.add_argument("--findings", default=os.path.join(ROOT, "findings"))
     ap.add_argument("--quick", action="store_true", help="-O0 only (generator debugging)")
     ap.add_argument("--allow-undefined", action="store_true")
+    ap.add_argument("--reduce", type=float, default=0, metavar="SECONDS",
+                    help="after the run, reduce each new finding for up to SECONDS "
+                         "(gen/reduce.py) and write min.tr beside prog.tr")
     ap.add_argument("--no-asan", action="store_true",
                     help="skip the ASan-runtime configurations even if build_asan/turfc exists")
     a = ap.parse_args()
@@ -205,6 +209,22 @@ def main():
             cls, n, rec.new_per_class[cls], rec.skipped[cls]))
     for d in new_dirs:
         print("  " + os.path.relpath(d, ROOT))
+    if a.reduce and new_dirs:
+        # After the run, one at a time: each reduction uses the whole job
+        # budget itself, so it never runs beside the fuzzing jobs.
+        import reduce as R
+        print("\n== reducing %d new finding(s), up to %.0fs each ==" % (len(new_dirs), a.reduce))
+        for d in new_dirs:
+            meta_path = os.path.join(d, "meta.json")
+            meta = json.load(open(meta_path))
+            src, summary = R.reduce_seed(meta["seed"], a.reduce, jobs)
+            if src is not None:
+                write(os.path.join(d, "min.tr"), src)
+                meta["status"] = "reduced (min.tr): " + summary
+            else:
+                meta["status"] = "unminimized: " + summary
+            json.dump(meta, open(meta_path, "w"), indent=2)
+            print("  %s: %s" % (os.path.relpath(d, ROOT), meta["status"]))
     sys.exit(0)
 
 

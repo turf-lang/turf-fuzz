@@ -14,8 +14,8 @@ minimized reproducer.
 |---|---|
 | `compiler.lock` | turflang commit under test; every finding records it |
 | `tier0/` | black-box token/line mutation crash fuzzer (port of turflang `scripts/fuzz/crash_fuzz.py`) |
-| `gen/` | typed program generator + reference evaluator (knows the expected result): ints, bools, bitwise ops, structs with methods, arrays, slices, collections, strings, errors, enums, generics, reference graphs on the GC heap; every rule it relies on is in `gen/SEMANTICS.md`. `gen/trace.py SEED` finds the first statement where a wrong answer diverges |
-| `oracles/` | differential (`-O` levels, `-g`, GC stress/validate), runtime, soundness |
+| `gen/` | typed program generator + reference evaluator (knows the expected result): ints, bools, bitwise ops, structs with methods, arrays, slices, collections, strings, errors, enums, generics, reference graphs on the GC heap; every rule it relies on is in `gen/SEMANTICS.md`. `gen/trace.py SEED` finds the first statement where a wrong answer diverges; `gen/reduce.py SEED` shrinks a finding on the AST while its verdict stays the same (`oracles/run.py --reduce SECONDS` does it for every new finding after a run) |
+| `oracles/` | differential (`-O` levels, `-g`, GC stress/validate, the ASan runtime), soundness (`soundness.py`: the F-MEM-5 escape boundary) |
 | `engine/` | libFuzzer in-process target over `include/turf/Analysis.h` (C++, clang) |
 | `triage/` | signature bucketing, minimization, issue text |
 | `corpus/` | small curated seeds; bulk lives in CI artifacts |

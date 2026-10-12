@@ -209,10 +209,12 @@ def _compile_diag(output):
     return (codes[0] if codes else "?"), msg
 
 
-def check_source(seed, source_path, workdir, expected, quick=False, asan=True):
+def check_source(seed, source_path, workdir, expected, quick=False, asan=True, only=None):
     """Run all configurations on source_path (copied to workdir/prog.tr).
     asan adds the ASan-runtime configurations when that compiler exists; with
-    quick it is the -O0 binary plus those (the GC/ownership view of a seed)."""
+    quick it is the -O0 binary plus those (the GC/ownership view of a seed).
+    only, a list of run configuration names, overrides both: just those runs
+    and the compiles they need (the reducer's cheap re-check of a verdict)."""
     v = Verdict(seed)
     v.expected = expected
     v.expected_text = generate.format_expected(expected)
@@ -226,6 +228,12 @@ def check_source(seed, source_path, workdir, expected, quick=False, asan=True):
     if asan and asan_available():
         compile_configs = compile_configs + ASAN_COMPILE_CONFIGS
         run_configs = run_configs + ASAN_RUN_CONFIGS
+    if only is not None:
+        every_run = RUN_CONFIGS + ASAN_RUN_CONFIGS
+        run_configs = [r for r in every_run if r[0] in only]
+        needed = {r[1] for r in run_configs} | {n for n in only
+                                                  if n in {c[0] for c in COMPILE_CONFIGS + ASAN_COMPILE_CONFIGS}}
+        compile_configs = [c for c in COMPILE_CONFIGS + ASAN_COMPILE_CONFIGS if c[0] in needed]
     for name, compiler, flags in compile_configs:
         out = "bin_" + name
         rc, so, se, to = _run([compiler, "prog.tr", "-o", out] + flags, workdir, timeout=COMPILE_TIMEOUT)
