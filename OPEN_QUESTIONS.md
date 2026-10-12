@@ -37,5 +37,3 @@ oracles/soundness.py --gaps` shows what each does today.
 - **Unchecked run-time int-to-enum casts.** `(7 to En)` from a run-time int is
   a value named `<unknown enum>` and defeats `compare` exhaustiveness (docs:
   "allowed through").
-- **Int `**` precision above 2^53.** It goes through `pow()` on doubles, so
-  `3 ** 39` is wrong by 11.
