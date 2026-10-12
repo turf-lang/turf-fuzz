@@ -1,0 +1,11 @@
+struct Box<T> {
+    v: T
+}
+
+fn f0(p0: Box<int>): int {
+    return 7;
+}
+
+fn main(): int {
+    return 0;
+}
