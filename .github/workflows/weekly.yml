@@ -1,0 +1,246 @@
+name: Weekly fuzzing
+# turf-fuzz item 7. Once a week, by the owner's decision (2026-10-12): the
+# fuzzing tiers cost hours, and turflang's own CI never depends on this repo.
+#
+#   process (pinned)  the compiler at compiler.lock: reproducible, every
+#                     finding replays with the lock as recorded
+#   process (master)  turflang's latest master: catches what changed since
+#   engine            libFuzzer over the front end at the lock, continuing
+#                     from last week's corpus (kept as an artifact)
+#
+# Only new signatures are filed: a finding whose directory is already under
+# findings/ (committed) just bumps its counter. Each job files at most one
+# issue in this repository, carrying the new findings; the reports, findings
+# and corpus are artifacts. The logic is in ci/*.sh, runnable locally.
+#
+# turflang is public, so this workflow's own token checks it out. Should it
+# go private, add a repository secret TURFLANG_TOKEN (read access to
+# turf-lang/turf-lang's contents) and it is used instead. The pinned commit
+# must have been pushed to turflang. Issues get the label `fuzz-finding` if
+# it exists, and none otherwise.
+on:
+  schedule:
+    - cron: "23 3 * * 0"  # Sundays 03:23 UTC
+  workflow_dispatch:
+    inputs:
+      diff_seconds:
+        description: "Differential oracle budget per compiler (seconds)"
+        default: "2400"
+      tier0_seconds:
+        description: "Tier-0 crash fuzzer budget per compiler (seconds)"
+        default: "900"
+      engine_seconds:
+        description: "libFuzzer budget (seconds)"
+        default: "3600"
+permissions:
+  contents: read
+  issues: write
+  actions: read
+concurrency:
+  group: weekly-fuzz
+  cancel-in-progress: false
+
+jobs:
+  process:
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [pinned, master]
+    runs-on: ubuntu-latest
+    timeout-minutes: 200
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: turf-fuzz
+      - name: Which turflang commit
+        id: ref
+        run: |
+          if [ "${{ matrix.compiler }}" = pinned ]; then
+            echo "ref=$(sed -n 's/^commit = //p' turf-fuzz/compiler.lock)" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=master" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        with:
+          repository: turf-lang/turf-lang
+          ref: ${{ steps.ref.outputs.ref }}
+          path: turflang
+          token: ${{ secrets.TURFLANG_TOKEN || github.token }}
+          submodules: false
+      - name: Cache LLVM
+        id: cache-llvm
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/lib/llvm-22
+            /usr/include/llvm-22
+            /usr/include/llvm-c-22
+          key: llvm-22-${{ runner.os }}-v1
+      - name: Install LLVM
+        if: steps.cache-llvm.outputs.cache-hit != 'true'
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 22
+          sudo apt-get install -y llvm-22-dev cmake
+      - run: echo "/usr/lib/llvm-22/bin" >> "$GITHUB_PATH"
+      - name: Install ccache
+        run: sudo apt-get install -y ccache
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-fuzz-${{ matrix.compiler }}-${{ steps.ref.outputs.ref }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-fuzz-${{ matrix.compiler }}-
+            ccache-fuzz-
+      # build_asan first: both trees write the plain lib/libturfrt.a, and the
+      # plain build's must be the one left (turflang AGENTS.md).
+      - name: Build turfc and the ASan-runtime turfc
+        run: |
+          export CC="ccache gcc" CXX="ccache g++"
+          cmake -S turflang -B turflang/build_asan -DCMAKE_BUILD_TYPE=Release \
+            -DTURF_RT_SANITIZE=ON -DTURF_SMART=OFF -DTURF_BUILD_CLI=OFF
+          cmake --build turflang/build_asan -j "$(nproc)"
+          cmake -S turflang -B turflang/build -DCMAKE_BUILD_TYPE=Release \
+            -DTURF_SMART=OFF -DTURF_BUILD_CLI=OFF
+          cmake --build turflang/build -j "$(nproc)"
+      - name: Fuzz (differential + reduction, soundness, tier 0)
+        env:
+          TURF_ROOT: ${{ github.workspace }}/turflang
+          DIFF_SECONDS: ${{ github.event.inputs.diff_seconds || '2400' }}
+          TIER0_SECONDS: ${{ github.event.inputs.tier0_seconds || '900' }}
+          OUT: ${{ github.workspace }}/ci-out
+        run: |
+          turf-fuzz/ci/process.sh
+          cat ci-out/summary.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the report and new findings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-process-${{ matrix.compiler }}
+          path: ci-out/
+          retention-days: 90
+      - name: File an issue for new signatures
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          n=$(wc -l < ci-out/new-findings.txt); s=$(wc -l < ci-out/soundness.txt)
+          [ "$n" -gt 0 ] || [ "$s" -gt 0 ] || exit 0
+          {
+            echo "Weekly fuzz against the **${{ matrix.compiler }}** compiler found $n new signature(s) and $s soundness failure(s) (run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}; artifact \`weekly-process-${{ matrix.compiler }}\`)."
+            echo
+            echo "Presume a generator or evaluator bug first for a wrong answer (\`gen/trace.py SEED\`). A real compiler bug gets a fix and a pinned test in turflang, and its directory committed under findings/."
+            echo
+            cat ci-out/summary.md
+            for d in $(cat ci-out/new-findings.txt); do
+              echo
+              echo "### \`$d\`"
+              [ -f "ci-out/findings/$d/meta.json" ] && { echo '```json'; head -c 1500 "ci-out/findings/$d/meta.json"; echo; echo '```'; }
+              f="ci-out/findings/$d/min.tr"; [ -f "$f" ] || f="ci-out/findings/$d/prog.tr"; [ -f "$f" ] || f="ci-out/findings/$d/input.tr"
+              [ -f "$f" ] && { echo '```turf'; head -c 3000 "$f"; echo; echo '```'; }
+            done
+          } > issue-body.md
+          title="Weekly fuzz (${{ matrix.compiler }}): $n new signature(s), $s soundness failure(s) ($(date -u +%F))"
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file issue-body.md --label fuzz-finding \
+          || gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file issue-body.md
+
+  engine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: turf-fuzz
+      - name: Which turflang commit
+        id: ref
+        run: echo "ref=$(sed -n 's/^commit = //p' turf-fuzz/compiler.lock)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: turf-lang/turf-lang
+          ref: ${{ steps.ref.outputs.ref }}
+          path: turflang
+          token: ${{ secrets.TURFLANG_TOKEN || github.token }}
+          submodules: false
+      - name: Cache LLVM
+        id: cache-llvm
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/lib/llvm-22
+            /usr/include/llvm-22
+            /usr/include/llvm-c-22
+          key: llvm-22-${{ runner.os }}-v1
+      - name: Install LLVM
+        if: steps.cache-llvm.outputs.cache-hit != 'true'
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 22
+          sudo apt-get install -y llvm-22-dev cmake
+      # The cache holds LLVM's tree; clang, libFuzzer's runtime and ninja are
+      # installed each time (apt.llvm.org is already a source after llvm.sh,
+      # and is added here when the cache skipped it).
+      - name: Install clang, compiler-rt, ninja
+        run: |
+          if ! command -v clang++-22 >/dev/null; then
+            wget -q https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && sudo ./llvm.sh 22
+          fi
+          sudo apt-get install -y clang-22 libclang-rt-22-dev ninja-build
+      - run: echo "/usr/lib/llvm-22/bin" >> "$GITHUB_PATH"
+      - name: Build the libFuzzer targets
+        run: |
+          CC=clang-22 CXX=clang++-22 cmake -S turf-fuzz/engine -B turf-fuzz/engine/build -G Ninja \
+            -DTURF_ROOT="$GITHUB_WORKSPACE/turflang"
+          cmake --build turf-fuzz/engine/build -j "$(nproc)" --target fuzz_analyze fuzz_analyze_tok
+      - name: Restore last week's corpus
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow weekly.yml --status success \
+                 --limit 1 --json databaseId -q '.[0].databaseId' || true)
+          mkdir -p prev-corpus
+          if [ -n "$id" ]; then
+            gh run download "$id" --repo "$GITHUB_REPOSITORY" --name engine-corpus --dir prev-corpus \
+              || echo "no engine-corpus artifact in run $id: starting from the seeds"
+          fi
+      - name: Fuzz
+        env:
+          TURF_ROOT: ${{ github.workspace }}/turflang
+          ENGINE_SECONDS: ${{ github.event.inputs.engine_seconds || '3600' }}
+          CORPUS_IN: ${{ github.workspace }}/prev-corpus
+          OUT: ${{ github.workspace }}/ci-out
+        run: |
+          turf-fuzz/ci/engine.sh
+          cat ci-out/summary.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the corpus
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-corpus
+          path: ci-out/engine-corpus/
+          retention-days: 90
+      - name: Upload the report and crash inputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-engine
+          path: |
+            ci-out/summary.md
+            ci-out/engine*.log
+            ci-out/engine-artifacts/
+          retention-days: 90
+      - name: File an issue for crash inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          n=$(cat ci-out/engine-artifact-count.txt 2>/dev/null || echo 0)
+          [ "$n" -gt 0 ] || exit 0
+          {
+            echo "The weekly libFuzzer run found $n input(s) the front end crashed, hung or ran out of memory on (run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}; artifact \`weekly-engine\`). Replay one with \`engine/build/fuzz_analyze FILE\` (with \`ulimit -s 65536\`) and triage it into findings/."
+            echo
+            cat ci-out/summary.md
+          } > issue-body.md
+          title="Weekly fuzz (engine): $n crash input(s) ($(date -u +%F))"
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file issue-body.md --label fuzz-finding \
+          || gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file issue-body.md
