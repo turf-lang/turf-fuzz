@@ -1,0 +1,12 @@
+import io;
+struct N { val: int, next: &?N }
+fn main(): int {
+    mut w: &?N = heap(N::default());
+    mut c: int = 0;
+    while (w != null && c < 3) {
+        c++;
+        defer io::printline(w.val);
+        w = w.next;
+    }
+    return 0;
+}

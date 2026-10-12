@@ -1,0 +1,10 @@
+import io;
+struct N { val: int, next: &?N }
+fn main(): int {
+    mut w: &?N = heap(N::default());
+    if (w != null) {
+        defer io::printline(w.val);
+        w = null;
+    }
+    return 0;
+}

@@ -328,6 +328,7 @@ class Gen:
             self.errors = [("E0", ["A", "B", "C"][:r.randint(1, 3)])]
         self.perr = None       # ("E1", [(variant, [(field, type)])]): payloads
         self.sweep = False     # generating the body of a payload sweep
+        self.in_walk = False   # generating a walk body (no defer there)
         self.enums = []
         if r.random() < 0.35:
             names = ["Red", "Green", "Blue", "Gold"]
@@ -1047,7 +1048,11 @@ class Gen:
         c = self.new_name("c")
         self.scope.declare(c, "int", LOOP)
         self.in_loop += 1
+        # No defer in a walk body: it would run after the step `w = w.rJ`,
+        # when `w` may be null (E081 since turflang 2f49c7e).
+        saved_walk, self.in_walk = self.in_walk, True
         body = self.gen_block(self.rng.randint(1, 3), depth + 1, (w, st))
+        self.in_walk = saved_walk
         self.in_loop -= 1
         self.mult = saved
         step = Assign(Var(w, t), Field(Var(w, RefT(st, False)), self.pick(self.self_refs(st))))
@@ -1711,7 +1716,7 @@ class Gen:
             got = self.agg_stmt(depth)
             if got:
                 return got
-        if self.use_defer and not self.in_defer and self.chance(0.06):
+        if self.use_defer and not self.in_defer and not self.in_walk and self.chance(0.06):
             got = self.defer_stmt()
             if got:
                 return [got]
