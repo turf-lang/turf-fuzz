@@ -507,6 +507,7 @@ class Oracle:
         self.seed, self.only, self.workroot = seed, only, workroot
         self.probes = 0
         self.check_valid = True
+        self.compile_only = False  # the verdict is the compiler's alone
 
     def verdict(self, prog):
         """(cls, sig) for prog, or None if it breaks a generator rule or the
@@ -524,7 +525,8 @@ class Oracle:
             path = os.path.join(wd, "prog.tr")
             with open(path, "w") as f:
                 f.write(prog.source)
-            v = D.check_source(self.seed, path, wd, res, only=self.only)
+            v = D.check_source(self.seed, path, wd, res, only=self.only,
+                               compile_only=self.compile_only)
             return (v.cls, v.sig)
         finally:
             shutil.rmtree(wd, ignore_errors=True)
@@ -594,6 +596,10 @@ def reduce_seed(seed, max_seconds=300, jobs=8, loose=False, log=lambda s: None):
         return None, "the oracle finds nothing to reduce"
     only = configs_for(full)
     oracle = Oracle(seed, only, work)
+    # A rejection or a compiler crash is decided before anything runs, so
+    # probes compile with --emit-obj and skip the linker (about half of each
+    # compile's time).
+    oracle.compile_only = full.cls == "rejected-valid" or (full.cls == "crash" and not full.runs)
     if not valid(prog):
         # The rules above misjudge this program: reducing without them is
         # still useful, but the result may have slid (said in the summary).

@@ -75,6 +75,28 @@ ASAN_RUN_CONFIGS = [
 def asan_available():
     return os.path.exists(TURFC_ASAN)
 
+
+_EMIT_OBJ = {}
+
+
+def emit_obj_supported(turfc=None):
+    """Does this turfc take `--emit-obj` (write the object, never link)? It
+    arrived with driver interface 1.6 (turflang src/main.cpp); an older
+    compiler, such as one built at an earlier commit to reproduce a finding,
+    would reject the flag as a usage error (exit 2)."""
+    turfc = turfc or TURFC
+    if turfc not in _EMIT_OBJ:
+        ok = False
+        try:
+            out = subprocess.run([turfc, "--version"], capture_output=True, text=True,
+                                 timeout=30).stdout
+            m = re.search(r"^interface (\d+)\.(\d+)", out, re.M)
+            ok = bool(m) and (int(m.group(1)), int(m.group(2))) >= (1, 6)
+        except Exception:
+            pass
+        _EMIT_OBJ[turfc] = ok
+    return _EMIT_OBJ[turfc]
+
 COMPILE_TIMEOUT = 120
 RUN_TIMEOUT = 10
 
@@ -209,12 +231,16 @@ def _compile_diag(output):
     return (codes[0] if codes else "?"), msg
 
 
-def check_source(seed, source_path, workdir, expected, quick=False, asan=True, only=None):
+def check_source(seed, source_path, workdir, expected, quick=False, asan=True, only=None,
+                 compile_only=False):
     """Run all configurations on source_path (copied to workdir/prog.tr).
     asan adds the ASan-runtime configurations when that compiler exists; with
     quick it is the -O0 binary plus those (the GC/ownership view of a seed).
     only, a list of run configuration names, overrides both: just those runs
-    and the compiles they need (the reducer's cheap re-check of a verdict)."""
+    and the compiles they need (the reducer's cheap re-check of a verdict).
+    compile_only compiles with `--emit-obj` (no link) and runs nothing: for a
+    verdict decided by the compiler alone (rejected-valid, a compiler crash),
+    where a linked binary would never be run."""
     v = Verdict(seed)
     v.expected = expected
     v.expected_text = generate.format_expected(expected)
@@ -234,8 +260,12 @@ def check_source(seed, source_path, workdir, expected, quick=False, asan=True, o
         needed = {r[1] for r in run_configs} | {n for n in only
                                                   if n in {c[0] for c in COMPILE_CONFIGS + ASAN_COMPILE_CONFIGS}}
         compile_configs = [c for c in COMPILE_CONFIGS + ASAN_COMPILE_CONFIGS if c[0] in needed]
+    if compile_only:
+        run_configs = []
     for name, compiler, flags in compile_configs:
         out = "bin_" + name
+        if compile_only and emit_obj_supported(compiler):
+            flags = flags + ["--emit-obj"]
         rc, so, se, to = _run([compiler, "prog.tr", "-o", out] + flags, workdir, timeout=COMPILE_TIMEOUT)
         text = so + se
         v.compile[name] = (rc, text if rc != 0 or to else "")
@@ -308,7 +338,10 @@ def check_source(seed, source_path, workdir, expected, quick=False, asan=True, o
         v.summary = "%s: %s" % (gv[0][0], gv[0][1].gc_validate[0])
         return v
 
-    # 3. all agree; compare to the evaluator
+    # 3. all agree; compare to the evaluator (nothing to compare when
+    # compile_only ran no binary: compiling cleanly is the whole verdict)
+    if not v.runs:
+        return v
     got = next(iter(v.runs.values()))
     if got.key() != expected_key(expected):
         v.cls = "wrong-answer"

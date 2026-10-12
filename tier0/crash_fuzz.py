@@ -81,8 +81,12 @@ def is_asan_binary(path: str) -> bool:
 
 
 class Runner:
-    def __init__(self, turfc: str, timeout: float, stack_mb: int):
+    def __init__(self, turfc: str, timeout: float, stack_mb: int, emit_obj: bool = False):
         self.turfc, self.timeout, self.stack_mb = turfc, timeout, stack_mb
+        # --emit-obj: compile everything (codegen and LLVM's backend included)
+        # but never run the system linker, which cost about half of every
+        # compile and is not what this tier fuzzes.
+        self.emit_obj = emit_obj
         self.env = dict(os.environ)
         self.env.setdefault("ASAN_OPTIONS", "detect_leaks=0:abort_on_error=0")
         # UBSan prints no stack unless asked; the signature wants the frames.
@@ -90,6 +94,8 @@ class Runner:
 
     def command(self, src: Path, outbin: Path, opt: str) -> list[str]:
         cmd = [self.turfc, str(src), "-o", str(outbin)] + ([opt] if opt else [])
+        if self.emit_obj:
+            cmd.append("--emit-obj")
         if self.stack_mb:
             # Soft limit only, in a shell that then becomes the compiler.
             cmd = ["sh", "-c", f'ulimit -S -s {self.stack_mb * 1024} && exec "$@"', "sh"] + cmd
@@ -190,6 +196,9 @@ def main() -> int:
     ap.add_argument("--out", default=str(ROOT / "findings"), help="findings root (default: turf-fuzz/findings)")
     ap.add_argument("--timeout", type=float, default=20, help="per-compile hang bound (default 20s)")
     ap.add_argument("--opt", default="", help='flag passed through, e.g. -O0 or -g; "random" picks one per compile')
+    ap.add_argument("--link", action="store_true",
+                    help="link every program (default: --emit-obj when the compiler has it, "
+                         "turfc interface 1.6+: everything but the system linker runs)")
     ap.add_argument("--stack-mb", type=int, default=None,
                     help="soft stack limit for the compiler in MB (default: 64 if the binary is "
                          "ASan-instrumented, else unchanged)")
@@ -207,7 +216,10 @@ def main() -> int:
         print(f"fuzz: compiler {turfc} not built", file=sys.stderr)
         return 2
     stack_mb = args.stack_mb if args.stack_mb is not None else (ASAN_STACK_MB if is_asan_binary(turfc) else 0)
-    runner = Runner(turfc, args.timeout, stack_mb)
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "oracles"))
+    import differential  # noqa: E402  (the interface check lives there)
+    emit_obj = not args.link and differential.emit_obj_supported(turfc)
+    runner = Runner(turfc, args.timeout, stack_mb, emit_obj)
 
     if args.replay:
         return replay(args, runner)
@@ -219,7 +231,8 @@ def main() -> int:
     seed = args.seed if args.seed is not None else int(time.time())
     print(f"fuzz: {len(pool)} seeds, {args.jobs} jobs, {args.seconds:.0f}s, seed {seed}, "
           f"compiler {turfc}, stack {stack_mb or 'default'}"
-          f"{' MB' if stack_mb else ''}, TURF_ROOT {root}", flush=True)
+          f"{' MB' if stack_mb else ''}, {'--emit-obj (no link)' if emit_obj else 'linking'}, "
+          f"TURF_ROOT {root}", flush=True)
 
     kw = mutate.keywords(root)
     vocab = sorted({w for p in pool[:300] for k, w in mutate.tokenize(p.read_text(errors="replace"))
@@ -266,7 +279,8 @@ def main() -> int:
                     continue
             cls = sig.kind
             seed_rel = sp.relative_to(root)
-            cmd = [turfc, "min.tr", "-o", "a.out"] + ([opt] if opt else [])
+            cmd = ([turfc, "min.tr", "-o", "a.out"] + ([opt] if opt else [])
+                   + (["--emit-obj"] if emit_obj else []))
             flags = (opt or "(default)") + (f"; ulimit -S -s {stack_mb * 1024}" if stack_mb else "")
             meta = {"command": cmd, "flags": flags, "seed_file": seed_rel, "fuzz_seed": seed,
                     "worker": w, "output": out}
