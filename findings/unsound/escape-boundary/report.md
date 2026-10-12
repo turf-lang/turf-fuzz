@@ -1,4 +1,4 @@
-# The F-MEM-5 escape boundary: ten holes fixed, four owner questions open
+# The F-MEM-5 escape boundary: all holes fixed, the four owner questions decided
 
 - class: accepted-but-unsound (a reference into a dead frame read back: garbage at -O0 after the next call clobbers the frame, often 0 at -O2)
 - found: probing for the soundness oracle (turf-fuzz item 3, slice 4), compiler bfa72ba
@@ -9,7 +9,16 @@
 - `k1_return_after_loop.tr` (also a loop before a push or a field store): EscapePass met a loop header's uncomputed back edge as an empty map, so every provenance became Unknown at every loop. Fixed in turflang 9398f38 (`tests/39_nullable_references/fail_escape_*_loop.tr`). There since FDN-002.
 - `k1_return_give.tr`: a `give` was always Unknown; when both branches have the same provenance it now has it. Fixed in turflang 1de8105 (`fail_escape_return_give_of_locals.tr`).
 
-## Open: the spec is silent, owner decision needed
+## Decided 2026-10-12, fixed 2026-10-13
+
+Owner decisions, FREEZE §6.13 amended; each is a `pinned/...` case of the soundness oracle. Every repro below now behaves as decided (E086, or accepted for the defer):
+
+- one path Stack: E086 if ANY path carries the local (a MayStack state at merges and mixed `give`s), turflang 1d210f3 (`fail_escape_return_mixed_paths.tr`, `fail_escape_return_loop_may_not_run.tr`, `fail_escape_return_give_mixed.tr`, `escape_mixed_paths_kept_local_ok.tr`)
+- error payload: a sink, like `heap()`'s operand, turflang 9afd843 (`fail_escape_error_payload.tr`, `escape_error_payload_param_ok.tr`)
+- call-result base: a call none of whose arguments can reach the frame, and a stdlib collection's element, are long-lived, turflang d5c7825 (`fail_escape_store_into_call_result.tr`, `fail_escape_store_into_list_element.tr`, `fail_escape_store_into_list_get.tr`, `escape_call_result_from_local_args_ok.tr`)
+- defer: the CFG records each defer's statement at its block's exits and EscapePass runs it there, turflang b7741c0 (`escape_defer_runs_after_return_value_ok.tr`, `fail_escape_defer_in_loop.tr`, `fail_escape_defer_before_break.tr`, `fail_escape_defer_overwrite_does_not_hide_local.tr`; the last, `p = &n; defer p = heap(n); return p;`, was a hidden unsound accept)
+
+The questions as they were asked:
 
 - **One path Stack, another not** (`k1_return_cond.tr`: `p = heap(n); if c { p = &n; } return p;`; `k1_return_foreach.tr`: a loop that may or may not run, `give` with mixed branches). The pass meets disagreeing paths to Unknown (must-analysis) and never flags it. Flagging needs a may-analysis at merges; F-MEM-5 says "a Stack-provenance value", and FDN-002 says "never a false positive", so this is a policy choice.
 - **A frame reference inside an error payload** (`k1_return_payload.tr`: `return E1::P(&n);`). Not a listed sink; the closest documented gap is "inside a by-value struct copy".

@@ -19,12 +19,10 @@ Between the escape and the read, main calls clobber(), which overwrites the
 stack where the dead frame was, so a dangling read prints garbage instead of
 a lucky 42.
 
-Shapes the compiler is documented not to catch (FDN-002 Known pitfalls) or
-whose verdict is an open owner decision are in GAPS; `--gaps` runs them too
-and reports what each does, never as a finding. When one is decided or
-closed, move it into the generated set with its verdict.
+Single shapes that were owner questions, now decided, are in PINNED with
+their verdict and run with the generated cases (named `pinned/...`).
 
-    python3 oracles/soundness.py [--jobs 8] [--gaps] [--only SUBSTR] [--keep]
+    python3 oracles/soundness.py [--jobs 8] [--only SUBSTR] [--keep]
 
 Rules and sources: gen/SEMANTICS.md, "Escape boundary (F-MEM-5)".
 """
@@ -227,38 +225,41 @@ WRAPPERS = {
 # Wrappers that put the sink inside a branch or a loop body.
 NESTED = {"in_while", "in_for", "in_if", "in_else", "in_block", "in_compare", "nested_loops"}
 
-# ------------------------------------------------------- known open shapes
-# (name, what it is, escaping function + main body). The value read should be
-# 42; a dangling reference reads something else. None is a finding here:
-# each is an open owner question (see
-# findings/unsound/escape-boundary/report.md and OPEN_QUESTIONS.md).
-GAPS = [
-    ("may_merge_cond", "one path Stack, the other Heap (owner: may vs must)",
+# ---------------------------------------------------- decided single shapes
+# (name, what it is, escaping function + main body, verdict). Each was an
+# open owner question, decided 2026-10-12 (findings/unsound/escape-boundary/
+# report.md) and checked on every run: "reject" must be E086, "accept" must
+# compile and print 42 under every configuration, like a generated case.
+PINNED = [
+    ("may_merge_cond", "one path Stack, the other Heap: E086 on any path",
      "fn esc(c: int): &N {\n    mut n: N = N::default();\n    n.val = 42;\n"
      "    mut p: &N = heap(n);\n    if c > 0 {\n        p = &n;\n    }\n    return p;\n}\n",
-     "mut r: &N = esc(1);"),
-    ("may_merge_give", "give with a Stack and a Heap branch (owner: may vs must)",
+     "mut r: &N = esc(1);", "reject", "returned"),
+    ("may_merge_give", "give with a Stack and a Heap branch: E086",
      "fn esc(c: int): &N {\n    mut n: N = N::default();\n    n.val = 42;\n"
-     "    return (c > 0 give &n otherwise heap(n));\n}\n", "mut r: &N = esc(1);"),
-    ("payload", "a frame reference in an error payload (not a listed sink)",
+     "    return (c > 0 give &n otherwise heap(n));\n}\n", "mut r: &N = esc(1);", "reject",
+     "returned"),
+    ("payload", "a frame reference in an error payload: a sink",
      "error E1 { P(r: &N) }\nfn fail(): !int {\n    mut n: N = N::default();\n    n.val = 42;\n"
      "    return E1::P(&n);\n}\nfn esc(c: int): &N {\n"
      "    mut v: int = fail() recover as err run {\n        compare (err) {\n"
      "            matches E1::P(r):\n                return r;\n            done\n"
      "            otherwise:\n                return heap(N::default());\n        }\n"
      "        return heap(N::default());\n    };\n    return heap(N::default());\n}\n",
-     "mut r: &N = esc(1);"),
-    ("call_result_base", "field store through a call result (Unknown base)",
+     "mut r: &N = esc(1);", "reject", "error payload"),
+    ("call_result_base", "field store through a call that takes nothing from the frame",
      "fn mk(): &N {\n    return heap(N::default());\n}\nfn esc(c: int): &N {\n"
      "    mut n: N = N::default();\n    n.val = 42;\n    mut h: &N = mk();\n"
      "    h.next = &n;\n    mut r: &?N = h.next;\n    if (r != null) {\n"
-     "        return (r to &N);\n    }\n    return h;\n}\n", "mut r: &N = esc(1);"),
+     "        return (r to &N);\n    }\n    return h;\n}\n", "mut r: &N = esc(1);", "reject",
+     "field that outlives"),
     # struct_copy, via_call, array_element and heap_of_struct_with_ref, the
     # documented FDN-002 residuals, were closed in turflang 2026-10-12 and are
     # now sources and sinks above (via_call, arr_elem, struct_*).
-    ("defer_false_positive", "rejected, though the return value is computed before the defer",
+    ("defer_after_return_value", "the return value is computed before the defer runs",
      "fn esc(c: int): &N {\n    mut n: N = N::default();\n    n.val = 42;\n"
-     "    mut p: &N = heap(n);\n    defer p = &n;\n    return p;\n}\n", "mut r: &N = esc(1);"),
+     "    mut p: &N = heap(n);\n    defer p = &n;\n    return p;\n}\n", "mut r: &N = esc(1);",
+     "accept", ""),
 ]
 
 
@@ -309,7 +310,7 @@ def build_case(src, sink, wrap):
     return text, ("accept" if safe else "reject"), sk["msg"]
 
 
-def gap_case(name, fn, main_head):
+def pinned_case(fn, main_head):
     text = (PRELUDE + "\n" + fn + "\nfn main(): int {\n    " + main_head
             + "\n    clobber(3);\n    io::printline(r.val);\n    return 0;\n}\n")
     return text
@@ -369,25 +370,9 @@ def check(name, text, expected, msg, keep_dir):
     return name, "ok", "", None
 
 
-def check_gap(name, what, text, keep_dir):
-    wd = tempfile.mkdtemp(prefix="gap_", dir=keep_dir)
-    with open(os.path.join(wd, "prog.tr"), "w") as f:
-        f.write(text)
-    rc, so, se, to = compile_(D.TURFC, wd, ["-O0"], "b0")
-    if rc != 0:
-        code, _ = diag(so + se)
-        res = "rejected %s" % code
-    else:
-        r = run_bin(wd, "b0")
-        res = "accepted, printed %s" % (r[1] + r[2]).strip().replace("\n", " ")[:40]
-    shutil.rmtree(wd, ignore_errors=True)
-    return name, what, res
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--jobs", type=int, default=8)
-    ap.add_argument("--gaps", action="store_true", help="also report the known open shapes")
     ap.add_argument("--only", help="only combinations whose name contains this")
     ap.add_argument("--keep", action="store_true", help="keep every failing case's directory")
     a = ap.parse_args()
@@ -403,6 +388,9 @@ def main():
         got = build_case(src, sink, wrap)
         if got:
             cases.append((name,) + got)
+    for name, what, fn, mh, verdict, msg in PINNED:
+        if not a.only or a.only in "pinned/" + name:
+            cases.append(("pinned/" + name, pinned_case(fn, mh), verdict, msg))
     print("compiler: %s  asan runtime: %s" % (
         D.TURFC, D.TURFC_ASAN if D.asan_available() else "not built"))
     print("%d cases (%d reject, %d accept)" % (
@@ -421,11 +409,6 @@ def main():
         print("  %-16s %-44s %s\n      %s" % (verdict, name, detail, wd))
         if not a.keep and wd:
             pass  # kept for inspection; work/ is git-ignored
-    if a.gaps:
-        print("\nknown open shapes (not findings; see findings/unsound/escape-boundary):")
-        for name, what, fn, mh in GAPS:
-            n, w, res = check_gap(name, what, gap_case(name, fn, mh), work)
-            print("  %-26s %-40s %s" % (n, res, w))
     sys.exit(1 if bad else 0)
 
 

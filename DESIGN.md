@@ -156,7 +156,7 @@ values, and the ASan-runtime and GC-stress configurations of tier 2 exercise
 the collector's root finding and the runtime's memory safety. The soundness
 oracle checks the compiler's static side:
 
-    python3 oracles/soundness.py --jobs 8 [--gaps] [--only SUBSTR] [--keep]
+    python3 oracles/soundness.py --jobs 8 [--only SUBSTR] [--keep]
 
 It generates 2662 small programs at the F-MEM-5 escape boundary (a reference
 reaching a sink: a return, a long-lived field or array element, a collection,
@@ -166,10 +166,12 @@ storage, rejected with E086 and the sink's wording; from a safe source,
 accepted and printing exactly `42` at -O0, -O2 and under the ASan runtime with
 a collection on every allocation. A `clobber()` call between the escape and
 the read makes a dangling read print garbage. Failures: `unsound-accepted`,
-`wrong-reason`, `rejected-valid`, `safe-wrong`, `crash`. Shapes the compiler
-is documented not to catch, or whose verdict is an open owner question, are
-in `GAPS`; `--gaps` runs them and reports, never as findings. Once one is
-decided, move it into the generated set with its verdict.
+`wrong-reason`, `rejected-valid`, `safe-wrong`, `crash`. Five single shapes
+that were owner questions (a merge of a frame path with a heap path, a mixed
+`give`, an error payload, a store through a call result, a `defer` after the
+return value) are decided (2026-10-12) and run with the generated cases as
+`pinned/...`, each with its verdict. A future open shape goes there once
+decided.
 
 ### Tier 4: libFuzzer over the front end (`engine/`)
 
