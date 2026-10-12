@@ -25,7 +25,8 @@ from tast import (INT_MIN, INT_MAX, StructT, ArrT, SliceT, ListT, Lit, BLit,
                   ListNew, Length, CopyE, Pop, Decl, Assign, Comp, IncDec,
                   Print, If, While, ForRange, ForEach, MethodCall, Push, Break,
                   Continue, Return, SLit, SCall, ToStr, CharAt, ErrLit, Try,
-                  RecoverP, ErrIs, ErrMsg, Defer, RecoverRun)
+                  RecoverP, ErrIs, ErrMsg, Defer, RecoverRun, EnumT, EnumLit,
+                  EnumOf, EnumTo, EnumCount, Compare)
 
 import sys
 
@@ -84,6 +85,19 @@ class Result:
 
 
 # ---------------------------------------------------------------------- values
+
+class EnumV:
+    """An enum value: its type and ordinal. Immutable, compared by value."""
+
+    def __init__(self, ty, k):
+        self.ty, self.k = ty, k
+
+    def __eq__(self, o):
+        return isinstance(o, EnumV) and o.ty == self.ty and o.k == self.k
+
+    def __hash__(self):
+        return hash((self.ty.name, self.k))
+
 
 class ErrV:
     """A failed !T: which variant, and its message ("" when none)."""
@@ -160,6 +174,8 @@ def zero(ty):
         return False
     if ty == "string":
         return ""
+    if isinstance(ty, EnumT):
+        return EnumV(ty, 0)  # storage is zero: the first variant
     if isinstance(ty, StructT):
         return SV({n: zero(t) for n, t in ty.fields})
     if isinstance(ty, ArrT):
@@ -290,6 +306,17 @@ class _Machine:
         if isinstance(e, SCall):
             args = [self.ev(a, env) for a in e.args]  # left to right
             return self.string_fn(e.fn, args)
+        if isinstance(e, EnumLit):
+            return EnumV(e.ty, e.k)
+        if isinstance(e, EnumOf):
+            k = self.ev(e.e, env)
+            assert 0 <= k < len(e.ty.variants), "generator keeps enum casts in range"
+            return EnumV(e.ty, k)
+        if isinstance(e, EnumTo):
+            v = self.ev(e.e, env)
+            return v.k if e.to == "int" else v.ty.variants[v.k]
+        if isinstance(e, EnumCount):
+            return len(e.enum.variants)
         if isinstance(e, ErrLit):
             return ErrV(e.variant, "" if e.msg is None else self.ev(e.msg, env))
         if isinstance(e, Try):
@@ -537,6 +564,14 @@ class _Machine:
                     break
         elif isinstance(s, Defer):
             self.defers[-1].append(s)
+        elif isinstance(s, Compare):
+            v = self.ev(s.subject, env)  # once
+            for pats, body in s.arms:
+                if any(self.ev(p, env) == v for p in pats):
+                    self.block(body, env)
+                    return
+            if s.els is not None:
+                self.block(s.els, env)
         elif isinstance(s, RecoverRun):
             v = self.ev(s.call, env)
             if isinstance(v, ErrV):

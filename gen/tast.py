@@ -93,9 +93,25 @@ class ListT:
         return ty_str(self)
 
 
+class EnumT:
+    def __init__(self, name, variants):
+        self.name, self.variants = name, variants
+
+    def __eq__(self, o):
+        return isinstance(o, EnumT) and o.name == self.name
+
+    def __hash__(self):
+        return hash(("enum", self.name))
+
+    def __repr__(self):
+        return self.name
+
+
 def ty_str(t):
     if isinstance(t, str):
         return t
+    if isinstance(t, EnumT):
+        return t.name
     if isinstance(t, StructT):
         return t.name
     if isinstance(t, ArrT):
@@ -118,7 +134,7 @@ def ty_str(t):
 def is_scalar(t):
     """A value with no parts to place into: int, bool and string (immutable,
     so sharing its storage is never observable)."""
-    return t in ("int", "bool", "string")
+    return t in ("int", "bool", "string") or isinstance(t, EnumT)
 
 
 def contains_string(t):
@@ -207,6 +223,37 @@ class CharAt:
 
     def __init__(self, base, idx):
         self.base, self.idx = base, idx
+
+
+class EnumLit:
+    """En::Vk"""
+
+    def __init__(self, ty, k):
+        self.ty, self.k = ty, k
+
+
+class EnumOf:
+    """(e to En) for an int e the generator keeps in [0, COUNT): a cast from a
+    run-time int is unchecked (`(7 to En)` is a value named "<unknown enum>")."""
+
+    def __init__(self, ty, e):
+        self.ty, self.e = ty, e
+
+
+class EnumTo:
+    """(v to int) -- the ordinal -- or (v to string) -- the variant's name."""
+
+    def __init__(self, e, to):
+        self.e, self.to = e, to
+        self.ty = to
+
+
+class EnumCount:
+    """En::COUNT"""
+    ty = "int"
+
+    def __init__(self, enum):
+        self.enum = enum
 
 
 class ErrLit:
@@ -435,6 +482,16 @@ class Defer:
         self.line = 0
 
 
+class Compare:
+    """compare subject { matches p: [matches q:] body done ... otherwise: body }
+    arms: list of (patterns, body); patterns are EnumLit or Lit, all distinct;
+    els: body or None. Bodies are never empty (E058)."""
+
+    def __init__(self, subject, arms, els):
+        self.subject, self.arms, self.els = subject, arms, els
+        self.line = 0
+
+
 class RecoverRun:
     """mut name: int = call recover as err run { body };   body diverges."""
 
@@ -481,8 +538,10 @@ class Method:
 
 
 class Program:
-    def __init__(self, structs, funcs, main, seed=0, paren_mode="min", errors=None):
+    def __init__(self, structs, funcs, main, seed=0, paren_mode="min", errors=None,
+                 enums=None):
         self.errors = errors or []  # [(error type name, [variants])]
+        self.enums = enums or []    # [EnumT]
         self.structs = structs
         self.funcs = funcs
         self.main = main
@@ -518,6 +577,11 @@ def walk_stmts(stmts):
                 yield from walk_stmts(s.els)
         elif isinstance(s, (While, ForRange, ForEach, RecoverRun)):
             yield from walk_stmts(s.body)
+        elif isinstance(s, Compare):
+            for _, body in s.arms:
+                yield from walk_stmts(body)
+            if s.els:
+                yield from walk_stmts(s.els)
 
 
 def _uses_list(p):
@@ -599,6 +663,14 @@ class _Renderer:
             return "(%s to string)" % self.expr(e.e, PREC_ATOM)
         if isinstance(e, CharAt):
             return "(%s[%s] to int)" % (self.expr(e.base, PREC_ATOM), self.expr(e.idx))
+        if isinstance(e, EnumLit):
+            return "%s::%s" % (e.ty.name, e.ty.variants[e.k])
+        if isinstance(e, EnumOf):
+            return "(%s to %s)" % (self.expr(e.e, PREC_ATOM), e.ty.name)
+        if isinstance(e, EnumTo):
+            return "(%s to %s)" % (self.expr(e.e, PREC_ATOM), e.to)
+        if isinstance(e, EnumCount):
+            return "%s::COUNT" % e.enum.name
         if isinstance(e, ErrLit):
             s = "%s::%s" % (e.etype, e.variant)
             return s if e.msg is None else s + "(%s)" % self.expr(e.msg)
@@ -647,6 +719,17 @@ class _Renderer:
                 self.stmt(s.stmt, ind)
                 self.lines[start] = "    " * ind + "defer " + self.lines[start].lstrip()
                 s.line = s.stmt.line
+        elif isinstance(s, Compare):
+            s.line = self.emit(ind, "compare (%s) {" % self.expr(s.subject))
+            for pats, body in s.arms:
+                for p in pats:
+                    self.emit(ind + 1, "matches %s:" % self.expr(p))
+                self.block(body, ind + 2)
+                self.emit(ind + 1, "done")
+            if s.els is not None:
+                self.emit(ind + 1, "otherwise:")
+                self.block(s.els, ind + 2)
+            self.emit(ind, "}")
         elif isinstance(s, RecoverRun):
             s.line = self.emit(ind, "mut %s: int = %s recover as %s run {" % (
                 s.name, self.expr(s.call), s.err))
@@ -722,6 +805,9 @@ class _Renderer:
         self.emit(0, "")
         for name, variants in self.p.errors:
             self.emit(0, "error %s { %s }" % (name, ", ".join(variants)))
+            self.emit(0, "")
+        for en in self.p.enums:
+            self.emit(0, "enum %s { %s }" % (en.name, ", ".join(en.variants)))
             self.emit(0, "")
         for st in self.p.structs:
             self.emit(0, "struct %s { %s }" % (st.name, ", ".join(

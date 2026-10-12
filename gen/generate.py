@@ -18,7 +18,8 @@ Subset:
     substring, replace, to_upper, to_lower, trim, trim_start, trim_end;
   * an error type, `!int` helpers returning `E0::V` (with a message),
     `recover produce`, `recover as err run`, `try`; `defer`; recursive
-    helpers with a literal depth;
+    helpers with a literal depth; enums (ordinal and name casts, COUNT,
+    ==) and `compare` over enums and ints;
   * if/elseif/else, while with a bounded counter, `for i in a..b`,
     break/continue, helper functions returning int (calls only go to
     earlier functions, so no recursion), early return, printing.
@@ -44,7 +45,8 @@ from tast import (INT_MIN, INT_MAX, StructT, ArrT, SliceT, ListT, is_scalar,  # 
                   IncDec, Print, If, While, ForRange, ForEach, MethodCall,
                   Push, Break, Continue, Return, Func, Method, Program,
                   SLit, SCall, ToStr, CharAt, contains_string, ErrLit, Try,
-                  RecoverP, ErrIs, ErrMsg, Defer, RecoverRun)
+                  RecoverP, ErrIs, ErrMsg, Defer, RecoverRun, EnumT, EnumLit,
+                  EnumOf, EnumTo, EnumCount, Compare)
 import evaluate as ev  # noqa: E402
 
 BOUNDARY = [INT_MAX, INT_MIN, INT_MAX - 1, INT_MIN + 1, 2147483647, -2147483648,
@@ -180,7 +182,10 @@ def check_foldable(e):
         check_foldable(e.call)
         check_foldable(e.fallback)
         return
-    if isinstance(e, (ErrIs, ErrMsg)):
+    if isinstance(e, (ErrIs, ErrMsg, EnumLit, EnumCount)):
+        return
+    if isinstance(e, (EnumOf, EnumTo)):
+        check_foldable(e.e)
         return
     if isinstance(e, ErrLit):
         if e.msg is not None:
@@ -236,6 +241,11 @@ class Gen:
         self.errors = []
         if self.use_errors:
             self.errors = [("E0", ["A", "B", "C"][:r.randint(1, 3)])]
+        self.enums = []
+        if r.random() < 0.35:
+            names = ["Red", "Green", "Blue", "Gold"]
+            for i in range(r.randint(1, 2)):
+                self.enums.append(EnumT("En%d" % i, names[:r.randint(2, 4)]))
         self.cur_fn = None     # the Func being generated (None in main/methods)
         self.in_defer = False  # `try` is E095 inside a defer
         self.in_run = False    # ... and kept out of recover blocks
@@ -272,6 +282,8 @@ class Gen:
                 k = self.rng.random()
                 if k < 0.45:
                     t = "string" if self.use_strings and self.chance(0.3) else "int"
+                    if self.enums and self.chance(0.25):
+                        t = self.pick(self.enums)
                 elif k < 0.62:
                     t = "bool"
                 elif k < 0.80:
@@ -289,6 +301,8 @@ class Gen:
         opts = ["int", "int", "int", "bool"]
         if self.use_strings:
             opts.append("string")
+        if self.enums:
+            opts.append(self.pick(self.enums))
         return self.pick(opts)
 
     def scalar_type(self):
@@ -296,7 +310,14 @@ class Gen:
         k = self.rng.random()
         if self.use_strings and k < 0.25:
             return "string"
+        if self.enums and k < 0.4:
+            return self.pick(self.enums)
         return "int" if self.chance(0.75) else "bool"
+
+    def zero_of(self, t):
+        if isinstance(t, EnumT):
+            return EnumLit(t, 0)
+        return {"int": Lit(0), "bool": BLit(False), "string": SLit("")}[t]
 
     def agg_type(self):
         """A type for a new aggregate local."""
@@ -428,8 +449,7 @@ class Gen:
             return None
         if isinstance(idx, Call):
             return got  # may be out of bounds on purpose
-        zero = {"int": Lit(0), "bool": BLit(False), "string": SLit("")}[target]
-        return Give(Bin(">", Length(lv), Lit(0)), got, zero)
+        return Give(Bin(">", Length(lv), Lit(0)), got, self.zero_of(target))
 
     # ----------------------------------------------------------- expressions
     def literal(self):
@@ -508,6 +528,8 @@ class Gen:
         if k < 0.45:
             return Bin("+", self.gen_str(depth - 1), self.gen_str(depth - 1))
         if k < 0.52:
+            if self.enums and self.chance(0.3):
+                return EnumTo(self.gen_enum(self.pick(self.enums), depth - 1), "string")
             return ToStr(self.gen_int(depth - 1))
         if k < 0.57:
             n = Lit(self.rng.randint(-1, 3))
@@ -561,6 +583,64 @@ class Gen:
         fn = self.pick(["contains", "starts_with", "ends_with"])
         return SCall(fn, [self.gen_str(depth - 1), self.str_leaf()])
 
+    # ------------------------------------------------------------------ enums
+    def gen_enum(self, t, depth):
+        k = self.rng.random()
+        if depth <= 0 or k < 0.45:
+            if self.chance(0.3):
+                got = self.agg_read(t, depth)
+                if got is not None:
+                    return got
+            vs = self.scope.vars(t)
+            if vs and self.chance(0.6):
+                return Var(self.pick(vs)[0], t)
+            return EnumLit(t, self.rng.randrange(len(t.variants)))
+        if k < 0.75:
+            # ((e % n) + n) % n is in [0, n): a cast from a run-time int is
+            # unchecked, so the generator never casts one out of range.
+            n = Lit(len(t.variants))
+            e = Bin("%", Bin("+", Bin("%", self.gen_int(depth - 1), n), n), n)
+            return EnumOf(t, e)
+        return Give(self.gen_bool(depth - 1), self.gen_enum(t, depth - 1),
+                    self.gen_enum(t, depth - 1))
+
+    def enum_int(self, depth):
+        t = self.pick(self.enums)
+        if self.chance(0.2):
+            return EnumCount(t)
+        return EnumTo(self.gen_enum(t, depth - 1), "int")
+
+    def enum_bool(self, depth):
+        t = self.pick(self.enums)
+        return Bin(self.pick(["==", "!="]), self.gen_enum(t, depth - 1), self.gen_enum(t, depth - 1))
+
+    def compare_stmt(self, depth):
+        """compare over an enum (every variant covered, or an `otherwise`) or
+        an int (literal patterns, `otherwise` optional). Distinct patterns,
+        stacked headers, non-empty bodies (E058)."""
+        if self.enums and self.chance(0.6):
+            t = self.pick(self.enums)
+            subject = self.gen_enum(t, 2)
+            pool = [EnumLit(t, k) for k in range(len(t.variants))]
+            exhaustive = self.chance(0.5)
+        else:
+            subject = self.int_expr(2)
+            pool = [Lit(v) for v in self.rng.sample(range(-3, 6), self.rng.randint(1, 4))]
+            exhaustive = False
+        self.rng.shuffle(pool)
+        used = pool if exhaustive else pool[:self.rng.randint(1, len(pool))]
+        arms = []
+        i = 0
+        while i < len(used):
+            n = self.rng.randint(1, min(2, len(used) - i))
+            arms.append((used[i:i + n], self.gen_block(self.rng.randint(1, 2), depth + 1)))
+            i += n
+        els = None
+        if not exhaustive and (isinstance(subject.ty, EnumT) and len(used) < len(pool)
+                               or self.chance(0.5)):
+            els = self.gen_block(self.rng.randint(1, 2), depth + 1)
+        return Compare(subject, arms, els)
+
     def shrink(self, e):
         """In tame mode keep a multiplication operand small."""
         if not self.tame:
@@ -593,6 +673,8 @@ class Gen:
             return self.int_leaf()
         if self.use_strings and self.chance(0.08):
             return self.string_int(depth)
+        if self.enums and self.chance(0.06):
+            return self.enum_int(depth)
         k = r.random()
         if k < 0.30:
             return self.int_leaf(depth)
@@ -628,6 +710,8 @@ class Gen:
             return self.bool_leaf() if self.chance(0.4) else self.compare(0)
         if self.use_strings and self.chance(0.12):
             return self.string_bool(depth)
+        if self.enums and self.chance(0.1):
+            return self.enum_bool(depth)
         k = r.random()
         if k < 0.15:
             return self.bool_leaf(depth)
@@ -653,6 +737,8 @@ class Gen:
             return self.gen_bool(depth)
         if t == "string":
             return self.gen_str(depth)
+        if isinstance(t, EnumT):
+            return self.gen_enum(t, depth)
         if isinstance(t, StructT):
             if self.chance(0.6):
                 got = self.place(t, "read", depth)
@@ -765,6 +851,8 @@ class Gen:
             return BLit(True)
         if ty == "string":
             return SLit("")
+        if isinstance(ty, EnumT):
+            return EnumLit(ty, 0)
         return None
 
     def int_expr(self, depth=3):
@@ -825,6 +913,8 @@ class Gen:
             got = self.recover_run(depth)
             if got:
                 return got
+        if depth < 3 and self.chance(0.05 if self.enums else 0.02):
+            return [self.compare_stmt(depth)]
         k = r.random()
         if k < 0.17:
             return [self.gen_decl()]
@@ -960,6 +1050,8 @@ class Gen:
     def scalar_expr(self, ty, depth=3):
         if ty == "string":
             return self.str_expr(depth)
+        if isinstance(ty, EnumT):
+            return self.expr_ok(lambda: self.gen_enum(ty, depth - 1), ty)
         return self.int_expr(depth) if ty == "int" else self.bool_expr(depth)
 
     def gen_decl(self):
@@ -1310,8 +1402,11 @@ class Gen:
         out = []
         for _ in range(self.rng.randint(2, 4)):
             ty = self.scalar_type()
-            e = (self.literal() if ty == "int" else BLit(self.chance(0.5))
-                 if ty == "bool" else self.str_literal())
+            if isinstance(ty, EnumT):
+                e = EnumLit(ty, self.rng.randrange(len(ty.variants)))
+            else:
+                e = (self.literal() if ty == "int" else BLit(self.chance(0.5))
+                     if ty == "bool" else self.str_literal())
             name = self.new_name("v")
             self.scope.declare(name, ty, MUT)
             out.append(Decl(name, ty, e, True))
@@ -1346,7 +1441,8 @@ class Gen:
         funcs = list(self.funcs)
         if self.opaque_used:
             funcs.insert(0, Func("opaque", [("x", "int")], [Return(Var("x", "int"))]))
-        return Program(self.structs, funcs, main, self.seed, self.paren_mode, self.errors)
+        return Program(self.structs, funcs, main, self.seed, self.paren_mode, self.errors,
+                       self.enums)
 
 
 def generate(seed, allow_undefined=False, max_attempts=20):
