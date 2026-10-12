@@ -22,7 +22,9 @@ name: Weekly fuzzing
 # it exists, and none otherwise.
 on:
   schedule:
-    - cron: "23 3 * * 0"  # Sundays 03:23 UTC
+    # Monday 00:00 IST, the midnight between Sunday and Monday (owner,
+    # 2026-10-12). Cron is in UTC: Sunday 18:30.
+    - cron: "30 18 * * 0"
   workflow_dispatch:
     inputs:
       diff_seconds:

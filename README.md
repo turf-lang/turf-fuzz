@@ -20,7 +20,7 @@ minimized reproducer.
 | `triage/` | signature bucketing, minimization, issue text |
 | `corpus/` | small curated seeds; bulk lives in CI artifacts |
 | `findings/` | one directory per signature: reproducer, minimized input, report |
-| `ci/` | the weekly CI run (`.github/workflows/weekly.yml`, Sundays): `process.sh` (differential + reduction, soundness, tier 0; against the pinned and the latest compiler), `sanitized.sh` (tier 0 against the ASan + UBSan compiler from master, turflang's former nightly fuzz), `engine.sh` (libFuzzer, corpus carried week to week as an artifact). New signatures only become an issue |
+| `ci/` | the weekly CI run (`.github/workflows/weekly.yml`, Mondays 00:00 IST): `process.sh` (differential + reduction, soundness, tier 0; against the pinned and the latest compiler), `sanitized.sh` (tier 0 against the ASan + UBSan compiler from master, turflang's former nightly fuzz), `engine.sh` (libFuzzer, corpus carried week to week as an artifact). New signatures only become an issue |
 
 ## Finding classes
 
