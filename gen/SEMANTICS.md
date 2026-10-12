@@ -246,3 +246,18 @@ as roots in locals, so these runs exercise root finding.
 * List panics use the stdlib's `file:line: message` shape, not the
   compiler's `panic: runtime check:` one; that is FREEZE F-API-3, not a gap.
 * `-g` alone uses the default optimization level, not `-O0`.
+
+## Escape boundary (F-MEM-5): the soundness oracle
+
+`oracles/soundness.py` builds every combination of a source, a sink and a
+control-flow wrapper (1166 programs) and pins each verdict. Compiler under
+test: turflang 1de8105.
+
+| Rule | Source |
+|---|---|
+| A reference into the current frame (`&n` of a local or by-value parameter; a variable holding one; a `give` both of whose branches are one) is rejected with E086 when it flows into a `return`, a field reached through a parameter, `self` or a `heap()` reference, a `List`/`Map`/`Stack`/`Queue` mutator (`push`, `put`, `enqueue`) or `[]=`, or `heap()`'s operand. The message names the sink: "can't be returned", "can't be stored into a field", "can't be pushed into a collection". | doc `FREEZE.md` §6.13 F-MEM-5, `pointers_and_references.md` §1.9; probe (`findings/unsound/escape-boundary`) |
+| The verdict does not depend on control flow that leaves the source alone: a loop before the sink, the sink inside a `while`, `for`, nested loops, `if`, `else`, a block or a `compare` arm. | turflang 9398f38 (before it, any loop made every provenance Unknown and the escape compiled) |
+| `(c give &a otherwise &b)` is a frame reference. | turflang 1de8105 (before it a `give` was always Unknown) |
+| `heap(n)`, a variable holding one, a `give` of two, and a `&N` the caller passed in are accepted at every sink, and the value read back after the frame is gone (and the stack overwritten by `clobber()`) is the one stored: exactly `42`, at -O0, -O2 and under the ASan runtime with `TURF_GC_STRESS=1`. | F-MEM-5 ("Param- and Heap-provenance values are always allowed to flow anywhere"); probe |
+| `l[0] = v` on a `List<&N>` takes exactly a `&N`: the oracle never puts a `&?N` there (F-OP-1). | probe (j1.tr) |
+| **Not pinned, reported with `--gaps` only**: a merge of a frame path with a heap path (`if`, a mixed `give`; owner decision, may vs must), a frame reference in an error payload, a field store through a call result, and the residual gaps FDN-002 documents (struct copy, intermediate call, `&arr[i]`, two hops, `heap()` of a struct holding one). All accepted, all read garbage. `p = heap(n); defer p = &n; return p;` is rejected, a false positive. | `findings/unsound/escape-boundary/report.md` |

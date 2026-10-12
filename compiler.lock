@@ -1,4 +1,4 @@
 # The turflang commit under test. Every finding records this SHA.
 # Bump it to see a fixed finding stop reproducing.
 repo = https://github.com/turf-lang/turf-lang
-commit = bfa72ba02da533cf7db21c67999e898c69bd04b8
+commit = 1de8105c234fa9f3d2c724c267b9c08cfa6756a7
