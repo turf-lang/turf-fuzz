@@ -36,10 +36,13 @@ EQ_OPS = ("==", "!=")
 # ---------------------------------------------------------------------- types
 
 class StructT:
-    def __init__(self, name, fields):
+    def __init__(self, name, fields, base=None):
         self.name = name
         self.fields = fields      # list of (field name, type)
         self.methods = []         # Method objects, filled in by the generator
+        # For an instantiation of a generic struct (`Gb0<int>`): the
+        # template's name (`Gb0`), which is what `::default()` is spelled on.
+        self.base = base
 
     def field_type(self, f):
         for n, t in self.fields:
@@ -430,6 +433,22 @@ class Pop:
         self.ty = base.ty.elem
 
 
+class GCall:
+    """g(c, a, b) for a user `fn<T> g(c: int, a: T, b: T): T`; ty is the T
+    this call instantiates, inferred from a and b."""
+
+    def __init__(self, fn, args, ty):
+        self.fn, self.args, self.ty = fn, args, ty
+
+
+class GGet:
+    """recv.get() on a `Gb0<T>`: its `v`."""
+
+    def __init__(self, recv):
+        self.recv = recv
+        self.ty = recv.ty.field_type("v")
+
+
 class CollNew:
     """Stack::default(), Map::default(), ..."""
 
@@ -579,6 +598,14 @@ class RecoverRun:
         self.line = 0
 
 
+class GPut:
+    """recv.put(e); on a `Gb0<T>`: `self.v = e; self.n = self.n + 1;`."""
+
+    def __init__(self, recv, e):
+        self.recv, self.e = recv, e
+        self.line = 0
+
+
 class CStmt:
     """base.name(args);  -- push, enqueue, add, put, remove (Map)."""
 
@@ -611,6 +638,7 @@ class Func:
         self.cost = 0
         self.fallible = fallible  # returns !int
         self.rec = rec            # first parameter is the recursion depth `d`
+        self.generic = False      # fn<T> name(c: int, a: T, b: T): T
 
 
 class Method:
@@ -629,6 +657,7 @@ class Program:
                  enums=None):
         self.errors = errors or []  # [(error type name, [variants])]
         self.enums = enums or []    # [EnumT]
+        self.gstructs = []          # names of generic struct templates (`Gb0`)
         self.structs = structs
         self.funcs = funcs
         self.main = main
@@ -743,7 +772,11 @@ class _Renderer:
         if isinstance(e, ArrLit):
             return "[%s]" % ", ".join(self.expr(x) for x in e.elems)
         if isinstance(e, Default):
-            return "%s::default()" % e.ty.name
+            return "%s::default()" % (e.ty.base or e.ty.name)
+        if isinstance(e, GCall):
+            return "%s(%s)" % (e.fn, ", ".join(self.expr(a) for a in e.args))
+        if isinstance(e, GGet):
+            return "%s.get()" % self.expr(e.recv, PREC_ATOM)
         if isinstance(e, ListNew):
             return "List::default()"
         if isinstance(e, Length):
@@ -848,6 +881,8 @@ class _Renderer:
             s.line = self.emit(ind, "mut %s: int = %s %s" % (s.name, self.expr(s.call), how))
             self.block(s.body, ind + 1)
             self.emit(ind, "};")
+        elif isinstance(s, GPut):
+            s.line = self.emit(ind, "%s.put(%s);" % (self.expr(s.recv, PREC_ATOM), self.expr(s.e)))
         elif isinstance(s, CStmt):
             s.line = self.emit(ind, "%s.%s(%s);" % (self.expr(s.base, PREC_ATOM), s.name,
                                                     ", ".join(self.expr(a) for a in s.args)))
@@ -900,6 +935,8 @@ class _Renderer:
     def func(self, f, is_main=False):
         if is_main:
             self.emit(0, "fn main(): int {")
+        elif f.generic:
+            self.emit(0, "fn<T> %s(%s): T {" % (f.name, self.params(f.params)))
         else:
             self.emit(0, "fn %s(%s): %s {" % (f.name, self.params(f.params),
                                              "!int" if f.fallible else "int"))
@@ -927,6 +964,14 @@ class _Renderer:
         for en in self.p.enums:
             self.emit(0, "enum %s { %s }" % (en.name, ", ".join(en.variants)))
             self.emit(0, "")
+        for base in self.p.gstructs:
+            # A generic struct and its two methods, monomorphized once per
+            # instantiation the program names.
+            for line in ("struct %s<T> { v: T, n: int }" % base, "",
+                         "fn<T> %s.put(x: T): void {" % base,
+                         "    self.v = x;", "    self.n = self.n + 1;", "}", "",
+                         "fn<T> %s.get(): T {" % base, "    return self.v;", "}", ""):
+                self.emit(0, line)
         for st in self.p.structs:
             self.emit(0, "struct %s { %s }" % (st.name, ", ".join(
                 "%s: %s" % (n, ty_str(t)) for n, t in st.fields)))

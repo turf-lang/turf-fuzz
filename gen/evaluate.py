@@ -27,7 +27,7 @@ from tast import (INT_MIN, INT_MAX, StructT, ArrT, SliceT, ListT, Lit, BLit,
                   Continue, Return, SLit, SCall, ToStr, CharAt, ErrLit, Try,
                   RecoverP, ErrIs, ErrMsg, Defer, RecoverRun, EnumT, EnumLit,
                   EnumOf, EnumTo, EnumCount, Compare, DLit, CLit, Conv, CollT,
-                  CollNew, CMeth, CIndex, TryGet, CStmt)
+                  CollNew, CMeth, CIndex, TryGet, CStmt, GCall, GGet, GPut)
 import math
 
 import sys
@@ -353,6 +353,11 @@ class _Machine:
         if isinstance(e, SCall):
             args = [self.ev(a, env) for a in e.args]  # left to right
             return self.string_fn(e.fn, args)
+        if isinstance(e, GCall):
+            args = [self.ev(a, env) for a in e.args]  # left to right
+            return self.call(self.funcs[e.fn], args)  # T's values pass by value
+        if isinstance(e, GGet):
+            return cp(self.obj(e.recv, env).f["v"])
         if isinstance(e, CollNew):
             return CV(e.ty.kind)
         if isinstance(e, CMeth):
@@ -664,6 +669,11 @@ class _Machine:
                 return
             c, k = self.locate(p, env)
             put(c, k, v, p.ty)
+        elif isinstance(s, GPut):
+            v = self.ev(s.e, env)  # the argument, then the receiver
+            sv = self.obj(s.recv, env)
+            put(sv.f, "v", v, s.recv.ty.field_type("v"))
+            sv.f["n"] = self.apply("+", sv.f["n"], 1)
         elif isinstance(s, CStmt):
             args = [self.ev(a, env) for a in s.args]
             self.coll_method(self.obj(s.base, env), s.name, args)

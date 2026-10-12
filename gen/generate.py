@@ -21,7 +21,8 @@ Subset:
     helpers with a literal depth; enums (ordinal and name casts, COUNT,
     ==) and `compare` over enums and ints; `double` (IEEE), `int32` and
     `char` with the `to` conversions between them and int; Stack, Queue,
-    Set and Map locals (shared, copied, emptied, missed);
+    Set and Map locals (shared, copied, emptied, missed); user generics
+    (`fn<T>` helpers and a generic struct with methods, at several types);
   * if/elseif/else, while with a bounded counter, `for i in a..b`,
     break/continue, helper functions returning int (calls only go to
     earlier functions, so no recursion), early return, printing.
@@ -49,7 +50,7 @@ from tast import (INT_MIN, INT_MAX, StructT, ArrT, SliceT, ListT, is_scalar,  # 
                   SLit, SCall, ToStr, CharAt, contains_string, ErrLit, Try,
                   RecoverP, ErrIs, ErrMsg, Defer, RecoverRun, EnumT, EnumLit,
                   EnumOf, EnumTo, EnumCount, Compare, DLit, CLit, Conv, CollT,
-                  CollNew, CMeth, CIndex, TryGet, CStmt)
+                  CollNew, CMeth, CIndex, TryGet, CStmt, GCall, GGet, GPut)
 import evaluate as ev  # noqa: E402
 
 BOUNDARY = [INT_MAX, INT_MIN, INT_MAX - 1, INT_MIN + 1, 2147483647, -2147483648,
@@ -187,9 +188,11 @@ def check_foldable(e):
         return
     if isinstance(e, (ErrIs, ErrMsg, EnumLit, EnumCount, DLit, CLit, CollNew)):
         return
-    if isinstance(e, CMeth):
+    if isinstance(e, (CMeth, GCall)):
         for a in e.args:
             check_foldable(a)
+        return
+    if isinstance(e, GGet):
         return
     if isinstance(e, CIndex):
         check_foldable(e.idx)
@@ -254,6 +257,12 @@ class Gen:
         self.use_rec = r.random() < 0.35      # helpers that call themselves
         self.use_numeric = r.random() < 0.4   # double, int32, char and casts
         self.use_colls = r.random() < 0.3     # Stack, Queue, Set, Map
+        # User generics: `fn<T> gN(c: int, a: T, b: T): T` helpers and one
+        # generic struct `Gb0<T>`, each instantiated at several types.
+        self.use_generics = r.random() < 0.35
+        self.gfuncs = []
+        self.ginsts = {}       # element type -> the StructT for Gb0<that>
+        self.gstruct_used = False
         self.errors = []
         if self.use_errors:
             self.errors = [("E0", ["A", "B", "C"][:r.randint(1, 3)])]
@@ -357,9 +366,13 @@ class Gen:
             opts += ["list"]
         if self.use_colls and not self.in_method:
             opts += ["coll", "coll"]
+        if self.use_generics and not self.in_method:
+            opts += ["gstruct", "gstruct"]
         if not opts:
             return None
         k = self.pick(opts)
+        if k == "gstruct":
+            return self.ginst(self.scalar_type())
         if k == "coll":
             kind = self.pick(["Stack", "Queue", "Set", "Map", "Map"])
             if kind != "Map":
@@ -554,6 +567,10 @@ class Gen:
     def gen_str(self, depth):
         if depth <= 0:
             return self.str_leaf()
+        if self.use_generics and self.chance(0.07):
+            got = self.generic_expr("string", depth)
+            if got is not None:
+                return got
         k = self.rng.random()
         if k < 0.25:
             return self.str_leaf(depth)
@@ -616,6 +633,70 @@ class Gen:
             return Bin(op, self.gen_str(depth - 1), self.gen_str(depth - 1))
         fn = self.pick(["contains", "starts_with", "ends_with"])
         return SCall(fn, [self.gen_str(depth - 1), self.str_leaf()])
+
+    # ---------------------------------------------------- user generics
+    def ginst(self, t):
+        """The StructT for `Gb0<t>` (one per element type): fields v: t and
+        n: int. Kept out of self.structs, so it is only ever a local: never a
+        field, an element or a parameter, where `Gb0::default()` would have no
+        declared type to take its argument from."""
+        key = repr(t)
+        if key not in self.ginsts:
+            self.ginsts[key] = StructT("Gb0<%s>" % tast.ty_str(t), [("v", t), ("n", "int")],
+                                       base="Gb0")
+        self.gstruct_used = True
+        return self.ginsts[key]
+
+    def generic_expr(self, t, depth):
+        """A value of scalar type t through a generic: `gN(c, a, b)`, which
+        instantiates gN at t, or `x.get()` on a `Gb0<t>` local. None if
+        neither is available."""
+        boxes = [e for e in self.scope.entries()
+                 if isinstance(e.ty, StructT) and e.ty.base and e.ty.field_type("v") == t]
+        if boxes and (not self.gfuncs or self.chance(0.4)):
+            e = self.pick(boxes)
+            return GGet(Var(e.name, e.ty))
+        if not self.gfuncs:
+            return None
+        g = self.pick(self.gfuncs)
+        spent = self.mult * (g.cost + 1)
+        if self.cost + spent > self.cost_cap:
+            return None
+        a = self.gen_value(t, max(depth - 1, 0))
+        b = self.gen_value(t, max(depth - 1, 0))
+        if a is None or b is None:
+            return None
+        self.cost += spent
+        return GCall(g.name, [self.gen_int(max(depth - 1, 0)), a, b], t)
+
+    def gput_stmt(self):
+        boxes = [e for e in self.scope.entries()
+                 if isinstance(e.ty, StructT) and e.ty.base and e.kind == MUT]
+        if not boxes:
+            return None
+        e = self.pick(boxes)
+        v = self.value_expr(e.ty.field_type("v"), 2)
+        return [GPut(Var(e.name, e.ty), v)] if v is not None else None
+
+    def gen_gfunc(self, idx):
+        """fn<T> gN(c: int, a: T, b: T): T -- a body over ints only (T has no
+        operations), returning a or b. Generated before the plain helpers, so
+        it calls none of them and they may all call it."""
+        self.reset_fn(400)
+        self.in_func = True
+        f = Func("g%d" % idx, [("c", "int"), ("a", "T"), ("b", "T")], [])
+        f.generic = True
+        self.cur_fn = f
+        self.scope.declare("c", "int", PARAM)
+        self.scope.declare("chk", "int", MUT)
+        body = [Decl("chk", "int", Lit(0), True)]
+        body.extend(self.gen_block(self.rng.randint(1, 4), 1))
+        body.append(If([[self.bool_expr(2), [Return(Var("a", "T"))], 0]], None))
+        body.append(Return(Var("b", "T")))
+        f.body = body
+        f.cost = self.cost + 2
+        self.cur_fn = None
+        return f
 
     # ------------------------------------------- Stack, Queue, Set, Map
     def colls(self, kinds=None):
@@ -736,6 +817,10 @@ class Gen:
         zero trap, so a divisor is a nonzero literal or `x * x + 1.0`."""
         if depth <= 0:
             return self.num_leaf("double", depth, self.double_literal)
+        if self.use_generics and self.chance(0.07):
+            got = self.generic_expr("double", depth)
+            if got is not None:
+                return got
         k = self.rng.random()
         if k < 0.3:
             return self.num_leaf("double", depth, self.double_literal)
@@ -794,6 +879,10 @@ class Gen:
 
     # ------------------------------------------------------------------ enums
     def gen_enum(self, t, depth):
+        if depth > 0 and self.use_generics and self.chance(0.1):
+            got = self.generic_expr(t, depth)
+            if got is not None:
+                return got
         k = self.rng.random()
         if depth <= 0 or k < 0.45:
             if self.chance(0.3):
@@ -890,6 +979,10 @@ class Gen:
             got = self.coll_int(depth)
             if got is not None:
                 return got
+        if self.use_generics and self.chance(0.07):
+            got = self.generic_expr("int", depth)
+            if got is not None:
+                return got
         k = r.random()
         if k < 0.30:
             return self.int_leaf(depth)
@@ -931,6 +1024,10 @@ class Gen:
             return self.numeric_bool(depth)
         if self.use_colls and self.chance(0.08):
             got = self.coll_bool(depth)
+            if got is not None:
+                return got
+        if self.use_generics and self.chance(0.06):
+            got = self.generic_expr("bool", depth)
             if got is not None:
                 return got
         k = r.random()
@@ -1121,7 +1218,8 @@ class Gen:
         return Assign(Var("chk", "int"), Bin("%", inner, Lit(1000000007)))
 
     def has_aggs(self):
-        return self.use_structs or self.use_arrays or self.use_lists or self.use_colls
+        return (self.use_structs or self.use_arrays or self.use_lists or self.use_colls
+                or self.use_generics)
 
     def gen_stmt(self, depth):
         r = self.rng
@@ -1179,6 +1277,8 @@ class Gen:
     def return_stmt(self):
         """An early return from a helper: in a `!int` one, half the time an
         error, now and then with a message (`E0::A("...")`)."""
+        if self.cur_fn is not None and self.cur_fn.generic:
+            return Return(Var(self.pick(["a", "b"]), "T"))  # the only T values there are
         if self.cur_fn is not None and self.cur_fn.fallible and self.chance(0.5):
             return Return(self.err_lit())
         return Return(self.int_expr(2))
@@ -1250,13 +1350,15 @@ class Gen:
     def jump(self):
         if self.in_loop and self.chance(0.35):
             return self.pick([Break, Continue])()
-        if self.cur_fn is not None and self.cur_fn.fallible and self.chance(0.3):
-            return Return(self.err_lit())
-        return Return(self.int_expr(2))
+        return self.return_stmt()
 
     def agg_stmt(self, depth):
         if self.use_colls and self.chance(0.3):
             got = self.coll_stmt()
+            if got:
+                return got
+        if self.use_generics and self.chance(0.2):
+            got = self.gput_stmt()
             if got:
                 return got
         k = self.rng.random()
@@ -1701,17 +1803,25 @@ class Gen:
     def program(self):
         if self.use_structs:
             self.gen_structs()
-            for st in self.structs:
-                for i in range(self.rng.choice([0, 1, 1, 2])):
-                    st.methods.append(self.gen_method(st, i))
+        if self.use_generics:
+            # Before every other function, so that methods, helpers and main
+            # may all call them (each later generic may call the earlier ones).
+            for i in range(self.rng.randint(1, 2)):
+                self.gfuncs.append(self.gen_gfunc(i))
+        for st in self.structs:
+            for i in range(self.rng.choice([0, 1, 1, 2])):
+                st.methods.append(self.gen_method(st, i))
         for i in range(self.rng.randint(0, 4)):
             self.funcs.append(self.gen_func(i))
         main = self.gen_main()
-        funcs = list(self.funcs)
+        funcs = self.gfuncs + self.funcs
         if self.opaque_used:
             funcs.insert(0, Func("opaque", [("x", "int")], [Return(Var("x", "int"))]))
-        return Program(self.structs, funcs, main, self.seed, self.paren_mode, self.errors,
+        prog = Program(self.structs, funcs, main, self.seed, self.paren_mode, self.errors,
                        self.enums)
+        if self.gstruct_used:
+            prog.gstructs = ["Gb0"]
+        return prog
 
 
 def generate(seed, allow_undefined=False, max_attempts=20):

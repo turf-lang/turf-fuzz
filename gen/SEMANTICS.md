@@ -12,7 +12,7 @@ are silent; a disagreement is a finding, not a rule.
 | Rule | Source |
 |---|---|
 | `int` is 64-bit signed. `bool` is a distinct type; `&&`, `\|\|`, `!` yield `bool`. | doc `docs/reference/variables_and_types.md`; `FREEZE.md` 6.2 |
-| Generated types: `int`, `bool`, `string`, `double`, `int32`, `char`, enums (locals, struct fields, array elements; `int`, `string` and structs also as List elements), structs, sized arrays `T[N]` (also 2-D), `T[]` (parameters and `.copy()` locals), `List<T>` (locals; `List<int>` also as a helper parameter), `Stack`/`Queue`/`Set`/`Map` (locals). Pointers and references, user generics, error payloads and state machines are out of subset. | scope |
+| Generated types: `int`, `bool`, `string`, `double`, `int32`, `char`, enums (locals, struct fields, array elements; `int`, `string` and structs also as List elements), structs, sized arrays `T[N]` (also 2-D), `T[]` (parameters and `.copy()` locals), `List<T>` (locals; `List<int>` also as a helper parameter), `Stack`/`Queue`/`Set`/`Map` (locals). User generics: `fn<T>` helpers and one generic struct (locals). Pointers and references, error payloads and state machines are out of subset. | scope |
 | Every local is initialized at declaration, except `mut a: T[N];`, which the generator always follows at once with one element write (see Aggregates, definite assignment). | doc `FREEZE.md` F-INIT-1 |
 | Declaration needs an explicit `: Type`; `mut`/`immut` forms are used. `immut` is only generated for a scalar with a non-literal-only initializer (see constant folding). Aggregates are always `mut`. | doc variables_and_types.md |
 
@@ -95,6 +95,14 @@ agree.
 | `defer s;` runs `s` when the enclosing `{ }` block exits: normally, or by `return`, `break`, `continue` or `try`; LIFO; once per loop iteration; **never on a panic**. A `return`'s value is computed before the defers run. A panic inside a deferred statement reports the `defer`'s own line. `s` is a print, a `chk` mix or a scalar assignment. | doc `control_flow.md`; probe (d1.tr) |
 | `defer { ... }` is not accepted (E103), so a deferred print renders as `defer io::flush();` then `defer io::printline(e);` (LIFO: print, then flush). | probe |
 | A recursive helper takes the depth `d` first, returns at `d <= 0` before anything else, and calls itself once per level at the top of its body with `d - 1`; callers pass a literal 0..6. 100000-deep recursion works (probe), so depth is never the limit. | probe (d1.tr) |
+
+## User generics
+
+| Rule | Source |
+|---|---|
+| `fn<T> gN(c: int, a: T, b: T): T`: `T` is inferred from `a` and `b` at each call, and every distinct `T` is its own instantiation (F-GEN-1). The body is ordinary generated code over `c` and its own locals; `T` has no operations (F-GEN-3), so the only `T` expressions are `a` and `b`, returned. Arguments pass by value. Called at `int`, `bool`, `string`, `double` and enum types. | doc `generics_and_operators.md`, `FREEZE.md` 6.1; probe (g1.tr) |
+| `struct Gb0<T> { v: T, n: int }` with `fn<T> Gb0.put(x: T): void { self.v = x; self.n = self.n + 1; }` and `fn<T> Gb0.get(): T { return self.v; }`. `Gb0<X>` is a struct value like any other: copied by assignment, fields read and written, `Gb0::default()` where a declaration or assignment gives the type. Only as a local. | doc `structs_and_enums.md` ("Generic structs"); probe (g1.tr) |
+| A generic call's result has the type of its own instantiation. | turflang 813fb53 (before it, with `g<double>` and `g<int32>` both instantiated, a call on int32 arguments was typed double and a following `to int` was an internal compiler error) |
 
 ## `Stack`, `Queue`, `Set`, `Map`
 
