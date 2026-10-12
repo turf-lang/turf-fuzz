@@ -5,6 +5,8 @@ name: Weekly fuzzing
 #   process (pinned)  the compiler at compiler.lock: reproducible, every
 #                     finding replays with the lock as recorded
 #   process (master)  turflang's latest master: catches what changed since
+#   sanitized         tier 0 against the ASan + UBSan compiler from master
+#                     (turflang's former nightly crash fuzz)
 #   engine            libFuzzer over the front end at the lock, continuing
 #                     from last week's corpus (kept as an artifact)
 #
@@ -32,6 +34,9 @@ on:
       engine_seconds:
         description: "libFuzzer budget (seconds)"
         default: "3600"
+      sanitized_seconds:
+        description: "Sanitized tier-0 crash fuzz budget (seconds)"
+        default: "2700"
 permissions:
   contents: read
   issues: write
@@ -142,6 +147,93 @@ jobs:
             done
           } > issue-body.md
           title="Weekly fuzz (${{ matrix.compiler }}): $n new signature(s), $s soundness failure(s) ($(date -u +%F))"
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file issue-body.md --label fuzz-finding \
+          || gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file issue-body.md
+
+  # turflang's nightly crash fuzz, moved here (owner, 2026-10-12): tier 0
+  # against the compiler built with ASan + UBSan from turflang's master, so a
+  # memory error in a compiler pass is a finding even when the plain build
+  # survives it. turflang keeps a three-minute pass per push.
+  sanitized:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: turf-fuzz
+      - uses: actions/checkout@v4
+        with:
+          repository: turf-lang/turf-lang
+          ref: master
+          path: turflang
+          token: ${{ secrets.TURFLANG_TOKEN || github.token }}
+          submodules: false
+      - name: Cache LLVM
+        id: cache-llvm
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/lib/llvm-22
+            /usr/include/llvm-22
+            /usr/include/llvm-c-22
+          key: llvm-22-${{ runner.os }}-v1
+      - name: Install LLVM
+        if: steps.cache-llvm.outputs.cache-hit != 'true'
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 22
+          sudo apt-get install -y llvm-22-dev cmake
+      - run: echo "/usr/lib/llvm-22/bin" >> "$GITHUB_PATH"
+      - name: Install ccache
+        run: sudo apt-get install -y ccache
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-fuzz-san-${{ github.run_id }}
+          restore-keys: |
+            ccache-fuzz-san-
+      - name: Build the sanitized turfc
+        run: |
+          export CC="ccache gcc" CXX="ccache g++"
+          cmake -S turflang -B turflang/build_san -DCMAKE_BUILD_TYPE=Release \
+            -DTURF_SANITIZE_COMPILER=ON -DTURF_SMART=OFF -DTURF_BUILD_CLI=OFF
+          cmake --build turflang/build_san -j "$(nproc)"
+      - name: Fuzz
+        env:
+          TURF_ROOT: ${{ github.workspace }}/turflang
+          SANITIZED_SECONDS: ${{ github.event.inputs.sanitized_seconds || '2700' }}
+          OUT: ${{ github.workspace }}/ci-out
+        run: |
+          turf-fuzz/ci/sanitized.sh
+          cat ci-out/summary.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the report and new findings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-sanitized
+          path: ci-out/
+          retention-days: 90
+      - name: File an issue for new signatures
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          n=$(wc -l < ci-out/new-findings.txt)
+          [ "$n" -gt 0 ] || exit 0
+          {
+            echo "The weekly sanitized crash fuzz (turflang master, ASan + UBSan compiler) found $n new signature(s) (run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}; artifact \`weekly-sanitized\`). A compiler bug gets a fix and its minimized program as a pinned \`fail_*\` test in turflang."
+            echo
+            cat ci-out/summary.md
+            for d in $(cat ci-out/new-findings.txt); do
+              echo
+              echo "### \`$d\`"
+              f="ci-out/findings/$d/min.tr"; [ -f "$f" ] || f="ci-out/findings/$d/input.tr"
+              [ -f "ci-out/findings/$d/report.md" ] && head -c 2000 "ci-out/findings/$d/report.md"
+              [ -f "$f" ] && { echo; echo '```turf'; head -c 3000 "$f"; echo; echo '```'; }
+            done
+          } > issue-body.md
+          title="Weekly fuzz (sanitized): $n new signature(s) ($(date -u +%F))"
           gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file issue-body.md --label fuzz-finding \
           || gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file issue-body.md
 
