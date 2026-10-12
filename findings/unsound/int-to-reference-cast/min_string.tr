@@ -1,0 +1,10 @@
+import io;
+struct N { val: int, next: &?N }
+fn main(): int {
+    mut s: string = "abc";
+    mut p: &N = (s to &N);
+    io::printline(p.val);
+    mut q: &?N = (16 to &?N);
+    if (q != null) { io::printline(q.val); }
+    return 0;
+}

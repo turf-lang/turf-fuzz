@@ -1,0 +1,9 @@
+# Accepted and faulted: a `&?T` that is not a variable was dereferenced unchecked
+
+- class: accepted-but-unsound. Safe code, no `unsafe`, null dereference: SIGSEGV at -O0, garbage output at the default level (a null load is undefined to the optimizer)
+- found: probing for reference-graph generation (turf-fuzz item 3, slice 1), compiler 813fb53; in the compiler since 879ff15 (2026-09-23)
+- repro: `min.tr` (`p.next.val`, `next` null), `min_call.tr` (`get().val`), `min_method.tr` (`q.bump()` on a null `&?N` variable), `min_cast.tr` (`(h.o to &N)`: a null becomes a `&N`). Also `l[i].val` on a `List<&?N>` and the write `p.next.val = 3`
+- cause: E081 and E082 were raised by NullabilityPass for `variable.field` and `variable to &T` only. Any other `&?T` base, and a method call on any base, was never looked at. FREEZE 6.6 says a `&?T` "must be null-tested before use"; narrowing is per-variable by design, so a non-variable can never be proven
+- fixed: turflang d896209 (method call on a variable: E081, flow-sensitive) and ec236f2 (non-variable base: E081 for a field or method, E082 for a cast, raised by the type checker with a "store it in a variable" hint). Tests: `tests/39_nullable_references/fail_deref_field_chain_without_variable.tr`, `fail_deref_call_result_without_variable.tr`, `fail_deref_list_element_without_variable.tr`, `fail_write_field_chain_without_variable.tr`, `fail_method_call_without_check.tr`, `fail_method_call_on_nullable_expression.tr`, `fail_cast_nullable_expression.tr`, and the accepted forms in `09_...` and `10_...`
+- blast radius: none in turflang's tests/, lib/std, showcase/, examples/ (all green before the tests were added)
+- still open, known before: the same dereference inside a `recover run { }` block is unchecked (`tests/99_known_bugs/nullable_deref_inside_recover_block_unchecked.tr`)

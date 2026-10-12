@@ -1,0 +1,10 @@
+import io;
+struct N { val: int, next: &?N }
+fn N.bump(k: int): void { self.val = self.val + k; }
+fn N.get(): int { return self.val; }
+fn main(): int {
+    mut q: &?N = null;
+    q.bump(1);                 // method call on a possibly-null variable
+    io::printline(q.get());
+    return 0;
+}

@@ -1,0 +1,10 @@
+import io;
+struct N { val: int, next: &?N }
+struct M { a: int, b: int, c: int }
+fn main(): int {
+    mut n: &N = heap(N::default());
+    mut m: &M = (n to &M);
+    m.c = 7;
+    io::printline(m.c);
+    return 0;
+}

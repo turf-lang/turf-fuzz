@@ -1,0 +1,7 @@
+import io;
+struct N { val: int, next: &?N }
+fn main(): int {
+    mut p: &N = (0 to &N);
+    io::printline(p.val);
+    return 0;
+}

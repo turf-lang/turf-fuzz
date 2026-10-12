@@ -1,0 +1,9 @@
+import io;
+struct N { val: int, next: &?N }
+struct H { o: &?N }
+fn main(): int {
+    mut h: H = H::default();
+    mut p: &N = (h.o to &N);       // cast of a non-variable
+    io::printline(p.val);
+    return 0;
+}

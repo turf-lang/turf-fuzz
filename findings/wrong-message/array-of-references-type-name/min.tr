@@ -1,0 +1,8 @@
+import io;
+struct N { val: int, next: &?N }
+fn mk(v: int): &N { mut n: N = N::default(); n.val = v; return heap(n); }
+fn main(): int {
+    mut a: &N[2] = [mk(1), mk(2)];
+    io::printline(a[0].val);
+    return 0;
+}

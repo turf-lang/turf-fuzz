@@ -1,0 +1,7 @@
+import io;
+struct N { val: int, next: &?N }
+fn get(): &?N { return null; }
+fn main(): int {
+    io::printline(get().val);
+    return 0;
+}
