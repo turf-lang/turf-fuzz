@@ -26,7 +26,8 @@ from tast import (INT_MIN, INT_MAX, StructT, ArrT, SliceT, ListT, Lit, BLit,
                   Print, If, While, ForRange, ForEach, MethodCall, Push, Break,
                   Continue, Return, SLit, SCall, ToStr, CharAt, ErrLit, Try,
                   RecoverP, ErrIs, ErrMsg, Defer, RecoverRun, EnumT, EnumLit,
-                  EnumOf, EnumTo, EnumCount, Compare)
+                  EnumOf, EnumTo, EnumCount, Compare, DLit, CLit, Conv)
+import math
 
 import sys
 
@@ -85,6 +86,17 @@ class Result:
 
 
 # ---------------------------------------------------------------------- values
+
+def fmt_double(v):
+    """printf("%g"), except that a NaN is "nan" whatever its sign (turflang
+    402eb39/e0c6ea0, owner decision 2026-10-12). Python's %g is C's %g."""
+    return "nan" if math.isnan(v) else "%g" % v
+
+
+def wrap32(v):
+    v &= 0xFFFFFFFF
+    return v - (1 << 32) if v >= 1 << 31 else v
+
 
 class EnumV:
     """An enum value: its type and ordinal. Immutable, compared by value."""
@@ -174,6 +186,10 @@ def zero(ty):
         return False
     if ty == "string":
         return ""
+    if ty == "double":
+        return 0.0
+    if ty in ("int32", "char"):
+        return 0
     if isinstance(ty, EnumT):
         return EnumV(ty, 0)  # storage is zero: the first variant
     if isinstance(ty, StructT):
@@ -265,6 +281,8 @@ class _Machine:
                 return not v
             if e.op == "~":
                 return ~v
+            if isinstance(v, float):
+                return -v  # IEEE negate, never a trap
             if v == INT_MIN:
                 self.trap("Integer overflow")
             return -v
@@ -306,6 +324,12 @@ class _Machine:
         if isinstance(e, SCall):
             args = [self.ev(a, env) for a in e.args]  # left to right
             return self.string_fn(e.fn, args)
+        if isinstance(e, DLit):
+            return e.v
+        if isinstance(e, CLit):
+            return ord(e.ch)
+        if isinstance(e, Conv):
+            return self.convert(self.ev(e.e, env), e.e.ty, e.to)
         if isinstance(e, EnumLit):
             return EnumV(e.ty, e.k)
         if isinstance(e, EnumOf):
@@ -332,6 +356,25 @@ class _Machine:
         if isinstance(e, ErrMsg):
             return env[e.err].msg
         raise TypeError(e)
+
+    def convert(self, v, frm, to):
+        """`to` between numeric types (variables_and_types.md, Legal
+        conversions; FREEZE 6.2 row 5)."""
+        if to == "double":
+            return float(v)               # round to nearest, like sitofp
+        if to == "string":
+            return fmt_double(v)          # only double -> string comes here
+        if frm == "double":
+            # Truncate toward zero; no integer value -> trap (turflang e0c6ea0).
+            lo, hi = (-(2 ** 31) - 1, 2 ** 31) if to == "int32" else (-(2 ** 63), 2 ** 63)
+            if math.isnan(v) or not (lo < v if to == "int32" else lo <= v) or not v < hi:
+                self.trap("Integer overflow")
+            return int(v)                 # int() truncates toward zero
+        if to == "int32":
+            return wrap32(v)              # int -> int32 truncates
+        if to == "char":
+            return v & 0xFF               # int -> char truncates
+        return v                          # int32/char -> int widen
 
     def string_fn(self, fn, a):
         """lib/std/core/strings.tr, on ASCII-only strings (SEMANTICS.md)."""
@@ -395,6 +438,8 @@ class _Machine:
             # for ASCII.
             return {"==": a == b, "!=": a != b, "<": a < b, ">": a > b,
                     "<=": a <= b, ">=": a >= b}[op]
+        if isinstance(a, float):
+            return self.apply_double(op, a, b, compound)
         if op == "+":
             r = a + b
         elif op == "-":
@@ -440,6 +485,22 @@ class _Machine:
         if not _in_range(r):
             self.trap("Integer overflow")
         return r
+
+    def apply_double(self, op, a, b, compound):
+        """IEEE: no trap on overflow (inf) or NaN; `/` and `%` by zero (also
+        -0.0) still trap (FREEZE 6.2); `%` is C fmod (sign of the dividend)."""
+        if op in ("/", "%"):
+            if b == 0.0:
+                self.trap(("Division by zero" if op == "/" else "Modulo by zero")
+                          + (" in compound assignment" if compound else ""))
+            if op == "/":
+                return a / b
+            if math.isinf(a) or math.isnan(a) or math.isnan(b):
+                return math.nan            # C fmod; Python's raises for inf
+            return math.fmod(a, b)
+        return {"+": lambda: a + b, "-": lambda: a - b, "*": lambda: a * b,
+                "==": lambda: a == b, "!=": lambda: a != b, "<": lambda: a < b,
+                ">": lambda: a > b, "<=": lambda: a <= b, ">=": lambda: a >= b}[op]()
 
     # ------------------------------------------------------------ statements
     def bind(self, params, args):
@@ -516,6 +577,8 @@ class _Machine:
             v = self.ev(s.e, env)
             if isinstance(v, str):
                 self.out.append(v + "\n")
+            elif isinstance(v, float):
+                self.out.append(fmt_double(v) + "\n")
             else:
                 if isinstance(v, bool):
                     v = 1 if v else 0

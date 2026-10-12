@@ -1,0 +1,24 @@
+rc: 1
+[1m[96mprog.tr[0m [90m(1 error, 1 warning)[0m
+
+[1m[93mââ warning [0m[90mat line 18, col 51[0m
+
+  [1m[93mWarning: [0m[93mBoth branches of this 'if' do the same thing![0m
+
+  [92mHint: The 'if'/'else' can be removed â just keep the body. Or did you forget to change one of the branches?[0m
+
+[90m  18 â [0m    } elseif v3 != (-11 < -2 || l2.length() != -6 give v3 otherwise v3) {
+[90m     â [0m                                                  [1m[93m^~~~ Here![0m
+
+[1m[91mââ error [0m[90mat line 28, col 31 [E134 Â· type mismatch][0m
+
+  [91mThat conversion isn't allowed!
+[0m  Cannot explicitly cast 'En0' to 'double'
+
+  [92mHint: Only some conversions are allowed with `to`; see `turf --explain E134` for the list.[0m
+
+[90m  28 â [0m    io::printline((En0::COUNT to double));
+[90m     â [0m                              [1m[91m^~ Here![0m
+
+  [90mRun `turf --explain E134` for more details.[0m
+

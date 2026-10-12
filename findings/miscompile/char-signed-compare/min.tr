@@ -1,0 +1,14 @@
+fn id(x: int): int {
+    return x;
+}
+
+fn main(): int {
+    immut hi: char = id(200) to char;
+    io::printline(hi > 'a');
+    io::printline(hi >= 'a');
+    io::printline((hi to int) > ('a' to int));
+    io::printline('z' > 'a');
+    mut s: string = "a";
+    io::printline(hi < s[0]);
+    return 0;
+}

@@ -96,11 +96,24 @@ agree.
 | `defer { ... }` is not accepted (E103), so a deferred print renders as `defer io::flush();` then `defer io::printline(e);` (LIFO: print, then flush). | probe |
 | A recursive helper takes the depth `d` first, returns at `d <= 0` before anything else, and calls itself once per level at the top of its body with `d - 1`; callers pass a literal 0..6. 100000-deep recursion works (probe), so depth is never the limit. | probe (d1.tr) |
 
+## `double`, `int32`, `char` and conversions
+
+| Rule | Source |
+|---|---|
+| `double` is IEEE binary64. `+ - *` never trap: overflow is `inf`, and `inf - inf`, `0 * inf` are NaN. `/` and `%` by zero (also `-0.0`) trap `Division by zero` / `Modulo by zero` (with ` in compound assignment` for `/=`, `%=`), which is why a NaN is only reachable through an overflow. `%` is C `fmod` (sign of the dividend). Unary `-` never traps. | doc `FREEZE.md` 6.2 (row 6 and the division bullet), `operators.md`; probe (f1.tr, c1.tr) |
+| Comparisons are IEEE: every ordered comparison with a NaN is false, `!=` is true; `-0.0 == 0.0`. | `src/CodegenExpr.cpp` (OEQ/UNE/OLT...); probe |
+| A double prints, and converts `to string`, as C `%g` (6 significant digits: `0.333333`, `1e+21`, `-0`, `inf`); **a NaN is always `nan`**. Python's `%g` is the same function. | doc `io_and_net.md`; owner decision 2026-10-12, turflang 402eb39 / e0c6ea0 (before: `-nan` at -O0, `nan` at -O2) |
+| `(i to double)` rounds to nearest. `(d to int)` truncates toward zero and **traps `Integer overflow`** for a NaN, ±inf or a value outside [-2^63, 2^63); `(d to int32)` likewise outside (-2^31 - 1, 2^31). | doc `FREEZE.md` 6.2 row 5, `variables_and_types.md` ("Legal conversions"); owner decision 2026-10-12, turflang e0c6ea0 (before: LLVM poison, INT_MIN at -O0 and garbage at -O2) |
+| `(i to int32)` keeps the low 32 bits (signed); `(x to int)` of an int32 sign-extends. **`int32 + int32` is an `int`**, so the generator does no arithmetic on int32: it converts in, stores, and converts out. | doc `variables_and_types.md`; probe (c1.tr: `mut s: int32 = b + b;` is E066) |
+| `char` is an unsigned byte: `(i to char)` keeps the low 8 bits, `(c to int)` is 0..255, literals are `'a'`; `== != < > <= >=` compare unsigned. Chars are printed only as `(c to int)`. | doc `variables_and_types.md` ("char"); turflang c851cac (before: ordering was signed, so a byte above 127 sorted below ASCII) |
+| Converting a literal behaves like converting a value, at run time: `(5000000000 to int32)` is 705032704, `(353 to char)` is 97, `(1e300 to int)` panics; none is a compile error. | probe |
+| Double literals are written with Python's `repr` (`1.5`, `1e+300`, `5e-324`); literal-only double arithmetic folds without error (`1e300 * 1e10` is `inf`). | doc `FREEZE.md` 6.2 row 1; probe (f1.tr) |
+
 ## Enums and `compare`
 
 | Rule | Source |
 |---|---|
-| 1-2 enums of 2-4 variants, as locals, struct fields and array elements. A zero-filled or defaulted enum is the first variant. `(v to int)` is the 0-based ordinal, `(v to string)` the variant's name, `En::COUNT` the number of variants; `==`/`!=` compare the same enum type; ordering operators are not defined. | doc `structs_and_enums.md` ("Enums"); probe (n1.tr) |
+| 1-2 enums of 2-4 variants, as locals, struct fields and array elements. A zero-filled or defaulted enum is the first variant. `(v to int)` is the 0-based ordinal, `(v to string)` the variant's name, `En::COUNT` the number of variants (an `int`, also under a cast: turflang 94c78ae); `==`/`!=` compare the same enum type; ordering operators are not defined. | doc `structs_and_enums.md` ("Enums"); probe (n1.tr) |
 | `(e to En)` from a run-time int is **not checked**: `(7 to En)` of a 3-variant enum is a value whose name is `<unknown enum>`. The generator only casts `((e % n) + n) % n`. Reported to the owner as a hole (the docs call it "allowed through"). | doc `structs_and_enums.md`; probe (n1.tr) |
 | `compare (s) { matches p: [matches q:] body done ... otherwise: body }`: the subject is evaluated once, the first arm with an equal pattern runs, else `otherwise`, else nothing. Patterns in one `compare` are distinct. An enum `compare` covers every variant or has `otherwise`; an int one need not. An arm body is never empty (E058) and is a block for `defer`. `break`/`continue` in an arm target the enclosing loop. Negative literal patterns (`matches -1:`) are fine. | doc `control_flow.md`, `structs_and_enums.md` ("Exhaustiveness"); probe (n1.tr, n2.tr) |
 

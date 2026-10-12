@@ -1,0 +1,6 @@
+enum En0 { A, B, C }
+
+fn main(): int {
+    io::printline((En0::COUNT to double));
+    return 0;
+}

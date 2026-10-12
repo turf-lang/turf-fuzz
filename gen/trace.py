@@ -34,7 +34,12 @@ class Probe(Print):
     """A print of one variable, tagged with the statement it follows."""
 
     def __init__(self, tag, name, ty):
-        super().__init__(Var(name, ty))
+        v = Var(name, ty)
+        if isinstance(ty, tast.EnumT):
+            v = tast.EnumTo(v, "int")      # an enum has no printline: its ordinal
+        elif ty in ("int32", "char"):
+            v = tast.Conv(v, "int")
+        super().__init__(v)
         self.tag, self.name = tag, name
 
 
@@ -54,7 +59,17 @@ def instrument(stmts, visible, tags):
         elif isinstance(s, ForEach):
             inner = [(s.var, s.base.ty.elem)] + ([(s.ivar, "int")] if s.ivar else [])
             s.body = instrument(s.body, scope + inner, tags)
+        elif isinstance(s, tast.Compare):
+            s.arms = [(p, instrument(b, scope, tags)) for p, b in s.arms]
+            if s.els is not None:
+                s.els = instrument(s.els, scope, tags)
+        elif isinstance(s, tast.RecoverRun):
+            # Only up to the block's own jump: nothing may follow it.
+            s.body = instrument(s.body[:-1], scope, tags) + s.body[-1:]
         out.append(s)
+        if isinstance(s, tast.RecoverRun):
+            scope.append((s.name, "int"))
+            continue  # v is unassigned on the failure path until the jump
         if isinstance(s, Decl):
             scope.append((s.name, s.ty))
         if isinstance(s, While):

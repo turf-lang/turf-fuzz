@@ -1,0 +1,15 @@
+{
+  "class": "rejected-valid",
+  "signature": "rejected E134 That conversion isn't allowed!",
+  "summary": "prog.tr rejected at O0: E134 That conversion isn't allowed!",
+  "note": "",
+  "seed": 7072,
+  "last_seed": 7243,
+  "count": 3,
+  "compiler_lock_commit": "402eb39143a64c0a4923c02a09aea142b7e0fea0",
+  "compiler_tree_head": "402eb39143a64c0a4923c02a09aea142b7e0fea0",
+  "turfc_version": "turfc 2.0.0-dev | interface 1.5 | llvm 22.1.8 | runtime turf_rt_abi_2_0 | root /home/a2ys/turflang/turflang | linker system-cc | smart built-in",
+  "found": "2026-10-12T12:07:30",
+  "reproduce": "python3 oracles/differential.py 7072",
+  "status": "unminimized"
+}

@@ -1,0 +1,35 @@
+// turf-fuzz gen: seed=7072 paren=min
+import io;
+import list::List;
+
+enum En0 { Red, Green, Blue }
+
+fn main(): int {
+    mut chk: int = 0;
+    mut v1: double = 100.0;
+    mut v2: bool = true;
+    mut v3: En0 = En0::Blue;
+    mut l1: List<int> = List::default();
+    mut l2: List<int> = List::default();
+    chk = (chk * 31 + ((((-7) to char) to int) - -39) % 1000003) % 1000000007;
+    if ((((2 % 3 + 3) % 3) to En0) != (1 < 62 give v3 otherwise En0::Blue) give !(8590272361797593397 > 3037000499) otherwise (1 to char) >= (7 to char)) {
+        v3 = (!(2865197355473306907 >= 3037000499) give (false give v3 otherwise En0::Blue) otherwise v3);
+        mut a1: int[1] = [-7 / (1 % 7 + 8)];
+    } elseif v3 != (-11 < -2 || l2.length() != -6 give v3 otherwise v3) {
+        mut v4: int = 1;
+    }
+    chk = (chk * 31 + 6 % 1000003) % 1000000007;
+    v2 = (-4 * -81239 != (v1 to int) give v1 / 0.001 >= 0.2 / 0.2 otherwise 94 > 8390360960045942509 % (1663831096260538913 % 7 + 8));
+    mut v5: int = -(-8 % (-8 % 7 + 8) * (v1 to int));
+    mut l3: List<int> = List::default();
+    mut v6: int = v5 + -(((-53) to int32) to int);
+    io::printline(0.1);
+    io::flush();
+    io::printline((En0::COUNT to double));
+    io::flush();
+    v6 -= v5;
+    v2 = ((60 to int32) to int) < ((((v5 % 3 + 3) % 3) to En0) to int);
+    io::printline(chk);
+    io::flush();
+    return 9223372036854775806 / (-5 % 7 + 8);
+}

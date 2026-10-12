@@ -134,7 +134,7 @@ def ty_str(t):
 def is_scalar(t):
     """A value with no parts to place into: int, bool and string (immutable,
     so sharing its storage is never observable)."""
-    return t in ("int", "bool", "string") or isinstance(t, EnumT)
+    return t in ("int", "bool", "string", "double", "int32", "char") or isinstance(t, EnumT)
 
 
 def contains_string(t):
@@ -174,12 +174,12 @@ class Var:
 
 
 class Un:
-    """op is '-' or '~' (int) or '!' (bool)."""
+    """op is '-' (int or double), '~' (int) or '!' (bool)."""
 
     def __init__(self, op, e):
         self.op = op
         self.e = e
-        self.ty = "bool" if op == "!" else "int"
+        self.ty = "bool" if op == "!" else "double" if e.ty == "double" else "int"
 
 
 class Bin:
@@ -189,8 +189,34 @@ class Bin:
         self.r = r
         if op == "+" and l.ty == "string":
             self.ty = "string"  # strings.tr `operator +`
+        elif op in ARITH_OPS and l.ty == "double":
+            self.ty = "double"
         else:
             self.ty = "int" if op in INT_OPS else "bool"
+
+
+class DLit:
+    """A double literal, rendered with Python's repr (always has '.' or 'e')."""
+    ty = "double"
+
+    def __init__(self, v):
+        self.v = v
+
+
+class CLit:
+    """A char literal 'x' (letters and digits only)."""
+    ty = "char"
+
+    def __init__(self, ch):
+        self.ch = ch
+
+
+class Conv:
+    """(e to T) between int, double, int32 and char, or double -> string."""
+
+    def __init__(self, e, to):
+        self.e, self.to = e, to
+        self.ty = to
 
 
 class SLit:
@@ -557,7 +583,7 @@ def _prec(e):
         return PREC[e.op]
     if isinstance(e, Un):
         return PREC_UNARY
-    if isinstance(e, Lit) and e.v < 0:
+    if isinstance(e, (Lit, DLit)) and (e.v < 0 or str(e.v).startswith("-")):
         return PREC_UNARY
     if isinstance(e, ErrIs):
         return PREC["=="]
@@ -655,6 +681,12 @@ class _Renderer:
             return "%s.copy()" % self.expr(e.base, PREC_ATOM)
         if isinstance(e, Pop):
             return "%s.pop()" % self.expr(e.base, PREC_ATOM)
+        if isinstance(e, DLit):
+            return repr(e.v)
+        if isinstance(e, CLit):
+            return "'%s'" % e.ch
+        if isinstance(e, Conv):
+            return "(%s to %s)" % (self.expr(e.e, PREC_ATOM), e.to)
         if isinstance(e, SLit):
             return '"%s"' % e.v.replace("\t", "\\t").replace("\n", "\\n")
         if isinstance(e, SCall):
