@@ -50,7 +50,8 @@ from tast import (INT_MIN, INT_MAX, StructT, ArrT, SliceT, ListT, is_scalar,  # 
                   SLit, SCall, ToStr, CharAt, contains_string, ErrLit, Try,
                   RecoverP, ErrIs, ErrMsg, Defer, RecoverRun, EnumT, EnumLit,
                   EnumOf, EnumTo, EnumCount, Compare, DLit, CLit, Conv, CollT,
-                  CollNew, CMeth, CIndex, TryGet, CStmt, GCall, GGet, GPut)
+                  CollNew, CMeth, CIndex, TryGet, CStmt, GCall, GGet, GPut,
+                  RefT, Null, Heap, AddrOf, RefCast, IsNull, has_nonnull_ref)
 import evaluate as ev  # noqa: E402
 
 BOUNDARY = [INT_MAX, INT_MIN, INT_MAX - 1, INT_MIN + 1, 2147483647, -2147483648,
@@ -58,8 +59,19 @@ BOUNDARY = [INT_MAX, INT_MIN, INT_MAX - 1, INT_MIN + 1, 2147483647, -2147483648,
 
 # Scope entry kinds. Whole assignment only to MUT; element/field writes
 # through MUT, SELF, VIEW and SLICE_PARAM; everything else is read-only.
-MUT, IMMUT, PARAM, SELF, VIEW, SLICE_PARAM, LOOP = range(7)
+#
+# Two more kinds, for references. NARROWED: a `&?S` variable inside its own
+# null check, seen there as a `&S`; the variable itself is hidden for as long,
+# so nothing assigns it and the check stays true (SEMANTICS.md, References).
+# BORROW: a `&S` parameter that may point into the caller's frame, so the
+# body reads and writes through it but never stores, returns or passes on
+# the reference itself except to another BORROW parameter.
+MUT, IMMUT, PARAM, SELF, VIEW, SLICE_PARAM, LOOP, NARROWED, BORROW = range(9)
 WRITABLE = (MUT, SELF, VIEW, SLICE_PARAM)
+
+
+def is_ref(t, nullable=None):
+    return isinstance(t, RefT) and (nullable is None or t.nullable == nullable)
 
 
 class Ent:
@@ -72,21 +84,34 @@ class Scope:
 
     def __init__(self):
         self.frames = [[]]
+        self.hidden = [[]]  # per frame: names narrowed there
 
     def push(self):
         self.frames.append([])
+        self.hidden.append([])
 
     def pop(self):
         self.frames.pop()
+        self.hidden.pop()
 
     def declare(self, name, ty, kind):
         self.frames[-1].append(Ent(name, ty, kind))
 
+    def narrow(self, name, st):
+        """From here to the end of the innermost frame, `name` (a `&?st`
+        variable) is a `&st` that nothing may assign."""
+        self.hidden[-1].append(name)
+        self.frames[-1].append(Ent(name, RefT(st, False), NARROWED))
+
     def entries(self):
+        hidden = {n for h in self.hidden for n in h}
         for fr in self.frames:
             for e in fr:
-                if e.name != "chk":  # only the checksum statements touch chk
-                    yield e
+                if e.name == "chk":  # only the checksum statements touch chk
+                    continue
+                if e.name in hidden and e.kind != NARROWED:
+                    continue
+                yield e
 
     def vars(self, ty=None, assignable=False):
         """(name, ty) of scalar-or-any variables; assignable means whole-var MUT."""
@@ -101,6 +126,13 @@ def reaches(t, target, through_lists=False):
         return True
     if isinstance(t, StructT):
         return any(reaches(ft, target, through_lists) for _, ft in t.fields)
+    if isinstance(t, RefT):
+        # Through a `&S` to S's fields (never to S itself: a struct cannot be
+        # read by value out of a reference). A `&?S` needs a null check on a
+        # variable first, so nothing is reached through one. `&S` fields only
+        # point at earlier types, so this terminates.
+        return (not t.nullable
+                and any(reaches(ft, target, through_lists) for _, ft in t.st.fields))
     if isinstance(t, (ArrT, SliceT)):
         return reaches(t.elem, target, through_lists)
     if isinstance(t, ListT) and through_lists:
@@ -186,7 +218,13 @@ def check_foldable(e):
         check_foldable(e.call)
         check_foldable(e.fallback)
         return
-    if isinstance(e, (ErrIs, ErrMsg, EnumLit, EnumCount, DLit, CLit, CollNew)):
+    if isinstance(e, (ErrIs, ErrMsg, EnumLit, EnumCount, DLit, CLit, CollNew, Null)):
+        return
+    if isinstance(e, (Heap, RefCast, IsNull)):
+        check_foldable(e.e)
+        return
+    if isinstance(e, AddrOf):
+        check_foldable(e.place)
         return
     if isinstance(e, (CMeth, GCall)):
         for a in e.args:
@@ -260,6 +298,12 @@ class Gen:
         # User generics: `fn<T> gN(c: int, a: T, b: T): T` helpers and one
         # generic struct `Gb0<T>`, each instantiated at several types.
         self.use_generics = r.random() < 0.35
+        # Reference graphs: node structs with `&?Self` fields, built with
+        # heap(), walked under null checks, tied into cycles, held in structs
+        # and Lists (SEMANTICS.md, References).
+        self.use_refs = r.random() < 0.4
+        self.nodes = []        # node StructTs (also in self.structs)
+        self.builders = []     # `fn nbK(v: int, a0: &?N, ...): &N` Funcs
         self.gfuncs = []
         self.ginsts = {}       # element type -> the StructT for Gb0<that>
         self.gstruct_used = False
@@ -324,6 +368,67 @@ class Gen:
                 fields.append(("f%d" % j, t))
             self.structs.append(StructT("S%d" % i, fields))
 
+    def gen_nodes(self):
+        """Node structs for reference graphs: `val: int`, up to two plain
+        fields, and 1-3 `&?Self` fields (one makes a list, more a tree or any
+        graph, cycles included). A second node type may also point at the
+        first, by `&?N0` and by a never-null `&N0`. Half the time a holder
+        struct follows, with references among plain fields. Fields are
+        shuffled, so pointer words sit at varying offsets for the collector."""
+        plain = list(self.structs)
+        for i in range(self.rng.randint(1, 2)):
+            st = StructT("N%d" % i, [("val", "int")])
+            for j in range(self.rng.randint(0, 2)):
+                k = self.rng.random()
+                if k < 0.5 or not plain:
+                    t = self.elem_type()
+                elif k < 0.75:
+                    t = ArrT(self.elem_type(), self.rng.randint(1, 3))
+                else:
+                    t = self.pick(plain)
+                st.fields.append(("x%d" % j, t))
+            for j in range(self.pick([1, 1, 2, 2, 3])):
+                st.fields.append(("r%d" % j, RefT(st, True)))
+            if self.nodes:
+                if self.chance(0.6):
+                    st.fields.append(("o0", RefT(self.nodes[0], True)))
+                if self.chance(0.4):
+                    st.fields.append(("o1", RefT(self.nodes[0], False)))
+            self.rng.shuffle(st.fields)
+            self.nodes.append(st)
+            self.structs.append(st)
+        if self.chance(0.5):
+            n = self.pick(self.nodes)
+            fields = [("k", "int"), ("head", RefT(n, True))]
+            if self.chance(0.5):
+                fields.append(("own", RefT(n, False)))
+            if self.chance(0.4):
+                fields.append(("inner", n))
+            if self.chance(0.3):
+                fields.append(("arr", ArrT(n, self.rng.randint(1, 2))))
+            self.rng.shuffle(fields)
+            self.structs.append(StructT("H0", fields))
+
+    def gen_builder(self, st, idx):
+        """fn nbK(v: int, a0: &?N, ...): &N -- a new node on the heap with
+        `val` and each `&?Self` field set from the arguments. heap() copies
+        the local `n`, which is about to go out of scope."""
+        refs = [(f, t) for f, t in st.fields if is_ref(t, True) and t.st is st]
+        params = [("v", "int")] + [("a%d" % i, t) for i, (_, t) in enumerate(refs)]
+        n = Var("n", st)
+        body = [Decl("n", st, Default(st)), Assign(Field(n, "val"), Var("v", "int"))]
+        for i, (f, t) in enumerate(refs):
+            body.append(Assign(Field(n, f), Var("a%d" % i, t)))
+        body.append(Return(Heap(n)))
+        f = Func("nb%d" % idx, params, body)
+        f.ret = RefT(st, False)
+        f.cost = len(body) + 2
+        return f
+
+    def self_refs(self, st):
+        """Names of st's `&?Self` fields: the edges a walk can follow."""
+        return [f for f, t in st.fields if is_ref(t, True) and t.st is st]
+
     def elem_type(self):
         opts = ["int", "int", "int", "bool"]
         if self.use_strings:
@@ -358,12 +463,14 @@ class Gen:
         opts = []
         if self.use_arrays:
             opts += ["arr"] * 3
-        if self.use_structs and self.structs:
+        if self.structs:
             opts += ["struct"] * 3
             if self.use_arrays:
                 opts += ["sarr"]
         if self.use_lists and not self.in_method:
             opts += ["list"]
+            if self.nodes:
+                opts += ["rlist"]
         if self.use_colls and not self.in_method:
             opts += ["coll", "coll"]
         if self.use_generics and not self.in_method:
@@ -371,6 +478,10 @@ class Gen:
         if not opts:
             return None
         k = self.pick(opts)
+        if k == "rlist":
+            # References in a collection: the List's buffer is the only thing
+            # keeping some nodes alive. A third of the time `&?N`, with nulls.
+            return ListT(RefT(self.pick(self.nodes), self.chance(0.3)))
         if k == "gstruct":
             return self.ginst(self.scalar_type())
         if k == "coll":
@@ -397,7 +508,9 @@ class Gen:
     def roots(self, writable):
         out = []
         for e in self.scope.entries():
-            if writable and e.kind not in WRITABLE:
+            # A `&S` of any kind is written through: the storage is not the
+            # variable's own.
+            if writable and e.kind not in WRITABLE and not is_ref(e.ty, False):
                 continue
             out.append(e)
         return out
@@ -413,6 +526,8 @@ class Gen:
         return got
 
     def _has_children(self, t, target):
+        if is_ref(t, False):
+            t = t.st
         if isinstance(t, StructT):
             return any(reaches(ft, target) for _, ft in t.fields)
         if isinstance(t, (ArrT, SliceT)):
@@ -448,9 +563,14 @@ class Gen:
             return e.kind == MUT
         if mode == "mutate":
             return e.kind in WRITABLE
-        return e.kind != SELF  # `self` is a pointer: read its fields, not it
+        # `self` is a pointer: read its fields, not it. A narrowed variable is
+        # still a `&?S` as a whole value (ref_vars() casts it), and a borrowed
+        # reference is never copied anywhere.
+        return e.kind not in (SELF, NARROWED, BORROW)
 
     def descend_strict(self, root, t, target, depth):
+        if is_ref(t, False):
+            t = t.st  # fields are reached through a `&S` with no extra syntax
         if isinstance(t, StructT):
             fs = [(f, ft) for f, ft in t.fields if reaches(ft, target)]
             if not fs:
@@ -698,6 +818,331 @@ class Gen:
         self.cur_fn = None
         return f
 
+    # ------------------------------------------------------- references
+    def ref_vars(self, t):
+        """Variables usable as a whole value of reference type t: one of
+        exactly that type, or for a `&S` a `&?S` variable inside its null
+        check, through the cast the compiler asks for there. Never `self`,
+        never a borrowed parameter."""
+        out = []
+        for e in self.scope.entries():
+            if e.ty != t or e.kind in (SELF, BORROW):
+                continue
+            if e.kind == NARROWED:
+                out.append(RefCast(Var(e.name, RefT(t.st, True))))
+            else:
+                out.append(Var(e.name, t))
+        return out
+
+    def gen_ref(self, t, depth):
+        """A value of reference type t. Every `&S` alternative has static type
+        exactly `&S` (the two branches of a `give` must agree), and a `&?S`
+        is null, a `&?S` variable or field, or any `&S` (which widens)."""
+        st = t.st
+        k = self.rng.random()
+        if t.nullable:
+            if k < 0.15:
+                return Null(t)
+            if k < 0.50:
+                vs = self.ref_vars(t)
+                if vs:
+                    return self.pick(vs)
+            if k < 0.72:
+                got = self.place(t, "read", depth)
+                if got is not None:
+                    return got
+            if k < 0.78:
+                got = self.list_ref(t, depth)
+                if got is not None:
+                    return got
+            return self.gen_ref(RefT(st, False), depth)
+        if k < 0.40:
+            vs = self.ref_vars(t)
+            if vs:
+                return self.pick(vs)
+        if k < 0.52:
+            got = self.place(t, "read", depth)
+            if got is not None:
+                return got
+        if k < 0.72 and depth > 0:
+            got = self.builder_call(st, depth)
+            if got is not None:
+                return got
+        if k < 0.80 and depth > 0:
+            return Give(self.gen_bool(depth - 1), self.gen_ref(t, depth - 1),
+                        self.gen_ref(t, depth - 1))
+        if k < 0.88:
+            got = self.list_ref(t, depth)
+            if got is not None:
+                return got
+        return Heap(self.gen_value(st, depth))
+
+    def exact_ref(self, t):
+        """A value whose static type is exactly t, or None. `l[i] = e` is an
+        operator and operators never widen (FREEZE F-OP-1): on a List<&?N>
+        neither a `&N` nor `null` is accepted there, only a `&?N`."""
+        if not t.nullable:
+            return self.value_expr(t, 1)
+        cands = self.ref_vars(t)
+        got = self.place(t, "read")
+        if got is not None:
+            cands.append(got)
+        return self.pick(cands) if cands else None
+
+    def builder_call(self, st, depth):
+        """nbK(v, a0, ...): a fresh node whose edges are references already
+        in scope (shared substructure, and cycles once one is assigned back)."""
+        b = self.builders[self.nodes.index(st)]
+        spent = self.mult * (b.cost + 1)
+        if self.cost + spent > self.cost_cap:
+            return None
+        self.cost += spent
+        args = [self.gen_int(depth - 1)]
+        for _, pt in b.params[1:]:
+            args.append(self.gen_ref(pt, depth - 1))
+        return Call(b.name, args, b.ret)
+
+    def list_ref(self, t, depth):
+        """(l.length() > 0 give l[i] otherwise <same type>) for a List of t."""
+        ls = [e for e in self.scope.entries() if e.ty == ListT(t)]
+        if not ls:
+            return None
+        if t.nullable:
+            # `null` has no type of its own in a `give`: the other branch has
+            # to be a `&?S` variable.
+            vs = self.ref_vars(t)
+            if not vs:
+                return None
+            other = self.pick(vs)
+        else:
+            other = Heap(Default(t.st))
+        lv = Var(self.pick(ls).name, ListT(t))
+        idx = Bin("%", self.gen_int(max(depth - 1, 0)), Length(lv))
+        return Give(Bin(">", Length(lv), Lit(0)), Index(lv, idx), other)
+
+    def ref_bool(self, depth):
+        """`q == null` / `q != null` on a `&?S` variable or field, or identity
+        between two references to the same struct type."""
+        st = self.pick(self.nodes)
+        t = RefT(st, True)
+        if self.chance(0.6):
+            cands = [v for v in self.ref_vars(t)]
+            got = self.place(t, "read", depth)
+            if got is not None:
+                cands.append(got)
+            if cands:
+                return IsNull(self.pick(cands), self.chance(0.5))
+        a = self.gen_ref(RefT(st, self.chance(0.5)), 0)
+        b = self.gen_ref(RefT(st, self.chance(0.5)), 0)
+        if isinstance(a, Null) or isinstance(b, Null):
+            return None
+        return Bin(self.pick(["==", "!="]), a, b)
+
+    def ref_stmt(self, depth):
+        k = self.rng.random()
+        if k < 0.22:
+            return self.ref_decl()
+        if k < 0.42:
+            return self.ref_assign()
+        if k < 0.64:
+            return self.narrow_if(depth)
+        if k < 0.76:
+            return self.walk_stmt(depth)
+        if k < 0.86:
+            return self.build_stmt(depth)
+        if k < 0.96:
+            return self.cycle_stmt(depth)
+        return self.ref_list_write()
+
+    def ref_decl(self):
+        t = RefT(self.pick(self.nodes), self.chance(0.5))
+        e = self.value_expr(t, 2)
+        name = self.new_name("nq" if t.nullable else "np")
+        self.scope.declare(name, t, MUT)
+        return [Decl(name, t, e)]
+
+    def ref_assign(self):
+        """A reference variable or field takes another reference: this is
+        where chains get longer, shared and cyclic."""
+        t = RefT(self.pick(self.nodes), self.chance(0.6))
+        p = self.place(t, "assign")
+        if p is None:
+            t = RefT(t.st, not t.nullable)
+            p = self.place(t, "assign")
+        if p is None:
+            return None
+        return [Assign(p, self.value_expr(t, 2))]
+
+    def ref_touch(self, name, st):
+        """A statement that dereferences the narrowed variable `name`."""
+        val = Field(Var(name, RefT(st, False)), "val")
+        if self.chance(0.5):
+            return Assign(val, Bin("%", self.int_expr(2), Lit(1000)))
+        if self.in_method:
+            return Print(val)
+        inner = Bin("+", Bin("*", Var("chk", "int"), Lit(31)), Bin("%", val, Lit(1000003)))
+        return Assign(Var("chk", "int"), Bin("%", inner, Lit(1000000007)))
+
+    def narrow_if(self, depth):
+        """if (q != null) { ...q is a &S here... } [else { ... }], also as
+        `q != null && cond`, and inverted: if (q == null) { } else { ... }.
+        Only a variable is ever narrowed (E081 for anything else)."""
+        cands = [e for e in self.scope.entries()
+                 if is_ref(e.ty, True) and e.kind in (MUT, PARAM)]
+        if not cands or depth >= 3:
+            return None
+        e = self.pick(cands)
+        v, st = Var(e.name, e.ty), e.ty.st
+        narrow = (e.name, st)
+        n = self.rng.randint(1, 3)
+        if self.chance(0.25):
+            return [If([[IsNull(v, False), self.gen_block(self.rng.randint(0, 2), depth + 1), 0]],
+                       self.gen_block(n, depth + 1, narrow))]
+        cond = IsNull(v, True)
+        if self.chance(0.3):
+            # The right side of `&&` runs only when the left held: q is a &S there.
+            self.scope.push()
+            self.scope.narrow(e.name, st)
+            extra = self.bool_expr(2)
+            self.scope.pop()
+            cond = Bin("&&", cond, extra)
+        body = self.gen_block(n, depth + 1, narrow)
+        els = self.gen_block(self.rng.randint(0, 2), depth + 1) if self.chance(0.3) else None
+        return [If([[cond, body, 0]], els)]
+
+    def walk_stmt(self, depth):
+        """mut w: &?N = start; mut c: int = 0;
+        while (w != null && c < K) { c++; ...; w = w.rJ; }
+        The counter bounds the walk on a cycle. `continue` skips the step, so
+        the next turn sees the same node; that is fine and still bounded."""
+        if depth >= 2:
+            return None
+        st = self.pick(self.nodes)
+        t = RefT(st, True)
+        start = self.value_expr(t, 1)
+        w = self.new_name("nw")
+        self.scope.declare(w, t, MUT)
+        bound = self.rng.randint(1, 6)
+        saved = self.mult
+        self.mult *= bound
+        c = self.new_name("c")
+        self.scope.declare(c, "int", LOOP)
+        self.in_loop += 1
+        body = self.gen_block(self.rng.randint(1, 3), depth + 1, (w, st))
+        self.in_loop -= 1
+        self.mult = saved
+        step = Assign(Var(w, t), Field(Var(w, RefT(st, False)), self.pick(self.self_refs(st))))
+        return [Decl(w, t, start),
+                While(c, bound, self.rng.randint(0, 2), body + [step], Var(w, t))]
+
+    def build_stmt(self, depth):
+        """for r in 0..K { q = nbK(e, q, ...); } -- grows a chain (a list when
+        there is one edge, a degenerate tree or a DAG with more) from heap()
+        nodes. A fresh `q` starts at null."""
+        if depth >= 2:
+            return None
+        st = self.pick(self.nodes)
+        b = self.builders[self.nodes.index(st)]
+        t = RefT(st, True)
+        out = []
+        vs = [e.name for e in self.scope.entries() if e.ty == t and e.kind == MUT]
+        if vs and self.chance(0.6):
+            q = self.pick(vs)
+        else:
+            q = self.new_name("nq")
+            self.scope.declare(q, t, MUT)
+            out.append(Decl(q, t, Null(t)))
+        k = self.rng.randint(1, 6)
+        spent = self.mult * k * (b.cost + 3)
+        if self.cost + spent > self.cost_cap:
+            return out or None
+        self.cost += spent
+        saved = self.mult
+        self.mult *= k
+        r = self.new_name("r")
+        self.scope.push()
+        self.scope.declare(r, "int", LOOP)
+        args = [self.int_expr(2), Var(q, t)]
+        for _, pt in b.params[2:]:
+            args.append(self.value_expr(pt, 0))
+        self.scope.pop()
+        self.mult = saved
+        out.append(ForRange(r, 0, k, [Assign(Var(q, t), Call(b.name, args, b.ret))]))
+        return out
+
+    def cycle_stmt(self, depth):
+        """Make a cycle on purpose; random assignments alone almost never
+        close one (measured: none in 113 programs). Either tie two references
+        in scope together (`x.rJ = y;`, a self-loop when y is x), or build a
+        ring: a tail node, a chain consed onto it, and the tail's edge set
+        back to the head, so a walk along that edge never reaches null.
+        A cycle with no reference from outside is garbage as a whole, which
+        only a tracing collector frees."""
+        st = self.pick(self.nodes)
+        t, tn = RefT(st, False), RefT(st, True)
+        edges = self.self_refs(st)
+        roots = [e.name for e in self.scope.entries() if e.ty == t]
+        vals = self.ref_vars(t)
+        if roots and vals and self.chance(0.4):
+            x = Var(self.pick(roots), t)
+            out = [Assign(Field(x, self.pick(edges)), self.pick(vals))]
+            if self.chance(0.5):  # and back: a two-node cycle unless x is y
+                y = self.pick(roots)
+                back = [v for v in vals]
+                out.append(Assign(Field(Var(y, t), self.pick(edges)), self.pick(back)))
+            return out
+        if depth >= 2:
+            return None
+        b = self.builders[self.nodes.index(st)]
+        k = self.rng.randint(0, 5)
+        spent = self.mult * (k + 1) * (b.cost + 3)
+        if self.cost + spent > self.cost_cap:
+            return None
+        self.cost += spent
+        tail = self.new_name("np")
+        head = self.new_name("nq")
+        out = [Decl(tail, t, Heap(Default(st)))]
+        self.scope.declare(tail, t, MUT)
+        out.append(Decl(head, tn, Var(tail, t)))
+        self.scope.declare(head, tn, MUT)
+        saved = self.mult
+        self.mult *= max(k, 1)
+        r = self.new_name("r")
+        self.scope.push()
+        self.scope.declare(r, "int", LOOP)
+        # The builder sets the J-th `&?Self` field from its J-th reference
+        # argument: the chain runs along the first, edges[0] in field order.
+        args = [self.int_expr(2), Var(head, tn)]
+        for _, pt in b.params[2:]:
+            args.append(self.value_expr(pt, 0))
+        self.scope.pop()
+        self.mult = saved
+        out.append(ForRange(r, 0, k, [Assign(Var(head, tn), Call(b.name, args, b.ret))]))
+        out.append(Assign(Field(Var(tail, t), edges[0]), Var(head, tn)))
+        return out
+
+    def ref_list_write(self):
+        """l[i].val = e on a List<&N>: written through the element (the
+        element is a reference, so this is not E098)."""
+        ls = [e for e in self.scope.entries()
+              if isinstance(e.ty, ListT) and is_ref(e.ty.elem, False)]
+        if not ls:
+            return None
+        e = self.pick(ls)
+        lv = Var(e.name, e.ty)
+        idx = Bin("%", self.int_expr(2), Length(lv))
+        w = Assign(Field(Index(lv, idx), "val"), self.int_expr(2))
+        return [If([[Bin(">", Length(lv), Lit(0)), [w], 0]], None)]
+
+    def addr_arg(self, st):
+        """&s for a struct local s of this frame, or a borrowed parameter
+        passed on: an argument for a parameter the callee does not keep."""
+        cands = [AddrOf(Var(e.name, e.ty)) for e in self.scope.entries()
+                 if e.ty is st and e.kind == MUT]
+        cands += [Var(e.name, e.ty) for e in self.scope.entries()
+                  if e.kind == BORROW and e.ty == RefT(st, False)]
+        return self.pick(cands) if cands else None
+
     # ------------------------------------------- Stack, Queue, Set, Map
     def colls(self, kinds=None):
         return [e for e in self.scope.entries()
@@ -739,10 +1184,11 @@ class Gen:
         if t.kind == "Set":
             if k < 0.65:
                 return [CStmt(c, "add", [self.expr_ok(lambda: self.coll_key("int"))])]
+            # The key before the name is declared: it must not mention it.
+            key = self.expr_ok(lambda: self.coll_key("int"))
             name = self.new_name("b")
             self.scope.declare(name, "bool", MUT)
-            return [Decl(name, "bool",
-                         CMeth(c, "remove", [self.expr_ok(lambda: self.coll_key("int"))], "bool"))]
+            return [Decl(name, "bool", CMeth(c, "remove", [key], "bool"))]
         key = self.expr_ok(lambda: self.coll_key(t.key), t.key)
         if k < 0.45:
             return [CStmt(c, "put", [key, self.int_expr(2)])]
@@ -1030,6 +1476,10 @@ class Gen:
             got = self.generic_expr("bool", depth)
             if got is not None:
                 return got
+        if self.nodes and self.chance(0.1):
+            got = self.ref_bool(depth)
+            if got is not None:
+                return got
         k = r.random()
         if k < 0.15:
             return self.bool_leaf(depth)
@@ -1063,6 +1513,8 @@ class Gen:
             return self.gen_i32(depth)
         if t == "char":
             return self.gen_char(depth)
+        if isinstance(t, RefT):
+            return self.gen_ref(t, depth)
         if isinstance(t, StructT):
             if self.chance(0.6):
                 got = self.place(t, "read", depth)
@@ -1114,14 +1566,17 @@ class Gen:
         args = []
         params = callee.params
         if callee.rec:
-            args.append(Lit(self.rng.randint(0, 6)))
+            args.append(Lit(self.rng.randint(0, callee.rec_max)))
             params = params[1:]
-        for _, t in params:
+        for n, t in params:
+            a = None
             if isinstance(t, SliceT):
                 a = self.slice_arg(t)
             elif isinstance(t, ListT):
                 a = self.list_arg(t)
-            else:
+            elif n in callee.borrows and self.chance(0.8):
+                a = self.addr_arg(t.st)  # `&s`: into this frame, for the call only
+            if a is None and not isinstance(t, (SliceT, ListT)):
                 a = self.gen_value(t, max(depth - 2, 0))
             if a is None:
                 return None
@@ -1177,6 +1632,8 @@ class Gen:
             return SLit("")
         if isinstance(ty, EnumT) or ty in ("double", "int32", "char"):
             return self.zero_of(ty)
+        if isinstance(ty, RefT):
+            return Null(ty) if ty.nullable else Heap(Default(ty.st))
         return None
 
     def int_expr(self, depth=3):
@@ -1201,9 +1658,14 @@ class Gen:
     def spend(self, n=1):
         self.cost += self.mult * n
 
-    def gen_block(self, n, depth):
+    def gen_block(self, n, depth, narrow=None):
+        """n statements in a scope of their own. narrow = (name, struct): the
+        block is the checked side of `name != null`, and opens by using it."""
         self.scope.push()
         out = []
+        if narrow is not None:
+            self.scope.narrow(*narrow)
+            out.append(self.ref_touch(*narrow))
         for _ in range(n):
             out.extend(self.gen_stmt(depth))
         self.scope.pop()
@@ -1219,7 +1681,7 @@ class Gen:
 
     def has_aggs(self):
         return (self.use_structs or self.use_arrays or self.use_lists or self.use_colls
-                or self.use_generics)
+                or self.use_generics or self.use_refs)
 
     def gen_stmt(self, depth):
         r = self.rng
@@ -1353,6 +1815,10 @@ class Gen:
         return self.return_stmt()
 
     def agg_stmt(self, depth):
+        if self.nodes and self.chance(0.4):
+            got = self.ref_stmt(depth)
+            if got:
+                return got
         if self.use_colls and self.chance(0.3):
             got = self.coll_stmt()
             if got:
@@ -1441,11 +1907,13 @@ class Gen:
             name = self.new_name("l")
             self.scope.declare(name, t, MUT)
             return [Decl(name, t, init)]
-        if isinstance(t, ArrT) and not contains_string(t) and self.chance(0.2):
+        if (isinstance(t, ArrT) and not contains_string(t) and not has_nonnull_ref(t)
+                and self.chance(0.2)):
             # `mut a: int[3];` is zero-filled, but definite assignment (F-INIT-1)
             # counts the whole array unassigned until one element is written.
             # Not with strings: an unwritten `string` element is a null
-            # pointer, not "" (open turflang issue, SEMANTICS.md).
+            # pointer, not "" (open turflang issue, SEMANTICS.md). Nor with a
+            # `&S` field, which the same declaration leaves null.
             first = self.value_expr(t.elem, 2)
             if first is None:
                 return None
@@ -1492,6 +1960,9 @@ class Gen:
             sub = []
             for t in types:
                 sub.extend(self._subtypes(t))
+            for e in self.roots(True):
+                if is_ref(e.ty, False):  # what a `&S` leads to, not S itself
+                    sub.extend(self._subtypes(e.ty.st)[1:])
             if not sub:
                 return None
             target = self.pick(sub)
@@ -1566,7 +2037,12 @@ class Gen:
         if not cands:
             return None
         st = self.pick(cands)
-        recv = self.place(st, "mutate")
+        # Through a reference the receiver is the variable itself: `p.m0()`.
+        refs = [e for e in self.scope.entries() if e.ty == RefT(st, False)]
+        if refs and self.chance(0.5):
+            recv = Var(self.pick(refs).name, RefT(st, False))
+        else:
+            recv = self.place(st, "mutate")
         if recv is None:
             return None
         m = self.pick(st.methods)
@@ -1595,12 +2071,18 @@ class Gen:
         if k < 0.55:
             return [Push(lv, self.value_expr(e.ty.elem, 2))]
         if k < 0.80:
+            # A reference element takes a value of exactly its type (exact_ref).
+            if is_ref(e.ty.elem):
+                val = self.exact_ref(e.ty.elem)
+                if val is None:
+                    return [Push(lv, self.value_expr(e.ty.elem, 2))]
+            else:
+                val = self.value_expr(e.ty.elem, 2)
             if self.chance(self.opaque_p):
                 self.opaque_used = True
-                return [Assign(Index(lv, Call("opaque", [self.int_expr(2)])),
-                               self.value_expr(e.ty.elem, 2))]
+                return [Assign(Index(lv, Call("opaque", [self.int_expr(2)])), val)]
             idx = Bin("%", self.int_expr(2), Length(lv))
-            return [If([[guard, [Assign(Index(lv, idx), self.value_expr(e.ty.elem, 2))], 0]], None)]
+            return [If([[guard, [Assign(Index(lv, idx), val)], 0]], None)]
         # pop into a variable of the element type, or into chk's mix
         t = e.ty.elem
         if is_scalar(t):
@@ -1706,11 +2188,13 @@ class Gen:
 
     def param_type(self):
         k = self.rng.random()
+        if self.nodes and k < 0.15:
+            return RefT(self.pick(self.nodes), self.chance(0.5))
         if k < 0.6 or not self.has_aggs():
             return "int"
         if k < 0.7:
             return "bool"
-        if k < 0.82 and self.use_structs and self.structs:
+        if k < 0.82 and self.structs:
             return self.pick(self.structs)
         if k < 0.9 and self.use_arrays:
             return ArrT("int", self.rng.randint(1, 4))
@@ -1730,38 +2214,66 @@ class Gen:
         self.reset_fn(1500)
         self.in_func = True
         fallible = self.use_errors and self.chance(0.5)
-        rec = self.use_rec and self.chance(0.4)
+        # A walker: `fn fK(d: int, t: &?N, ...)` that returns at once on null
+        # (the early-return form of a null check: `t` is a `&N` from there on)
+        # and calls itself on one or more of t's edges, a recursive walk of a
+        # list, a tree or, bounded by `d`, a cyclic graph.
+        walker = bool(self.nodes) and self.chance(0.35)
+        rec = walker or (self.use_rec and self.chance(0.4))
         params = [("d", "int")] if rec else []
+        edges = []
+        if walker:
+            st = self.pick(self.nodes)
+            params.append(("t", RefT(st, True)))
+            own = self.self_refs(st)
+            edges = self.rng.sample(own, self.rng.randint(1, len(own)))
         for i in range(self.rng.randint(0, 3)):
             params.append(("p%d" % i, self.param_type()))
         f = Func("f%d" % idx, params, [], fallible, rec)
+        # Total calls of a b-way recursion from depth rec_max stay near 40.
+        f.rec_max = {0: 6, 1: 6, 2: 4, 3: 3}[len(edges)]
+        f.borrows = {n for n, t in params if is_ref(t, False) and self.chance(0.5)}
         self.cur_fn = f
         for n, t in params:
-            self.scope.declare(n, t, SLICE_PARAM if isinstance(t, SliceT) else PARAM)
+            kind = (SLICE_PARAM if isinstance(t, SliceT)
+                    else BORROW if n in f.borrows else PARAM)
+            self.scope.declare(n, t, kind)
         self.scope.declare("chk", "int", MUT)
         body = [Decl("chk", "int", Lit(0), True)]
+        if walker:
+            t = Var("t", RefT(st, True))
+            body.append(If([[IsNull(t, False), [self.return_stmt()], 0]], None))
+            self.scope.narrow("t", st)  # for the rest of the function
         if rec:
             # Base case first, so every level does at most one body's work.
             body.append(If([[Bin("<=", Var("d", "int"), Lit(0)), [self.return_stmt()], 0]], None))
         body.extend(self.initial_vars())
         body.extend(self.gen_block(self.rng.randint(1, 6), 0))
-        if rec:
+        if walker:
+            for edge in edges:
+                body.append(self.self_call(f, Field(Var("t", RefT(st, False)), edge)))
+        elif rec:
             body.append(self.self_call(f))
         body.append(Return(self.int_expr(3)))
         f.body = body
         f.cost = self.cost + 2
         if rec:
-            f.cost *= self.REC_LEVELS
+            b = max(len(edges), 1)
+            f.cost *= sum(b ** i for i in range(f.rec_max + 1))
         self.cur_fn = None
         return f
 
-    def self_call(self, f):
+    def self_call(self, f, edge=None):
         """chk = mix(chk, f(d - 1, ...)): one recursive call per level, at the
         top of the body (never in a loop), so the work is linear in the depth.
-        An aggregate parameter is passed on as it is."""
+        An aggregate parameter is passed on as it is. A walker passes one of
+        its node's edges (`t.rJ`) as the next `t`, once per edge it follows."""
         args = [Bin("-", Var("d", "int"), Lit(1))]
         for n, t in f.params[1:]:
-            args.append(Var(n, t) if not is_scalar(t) else self.value_expr(t, 1))
+            if edge is not None and n == "t":
+                args.append(edge)
+            else:
+                args.append(Var(n, t) if not is_scalar(t) else self.value_expr(t, 1))
         call = Call(f.name, args)
         e = self.handle_fallible(call, f, 2)
         inner = Bin("+", Bin("*", Var("chk", "int"), Lit(31)), Bin("%", e, Lit(1000003)))
@@ -1784,6 +2296,9 @@ class Gen:
         if self.has_aggs():
             for _ in range(self.rng.randint(1, 2)):
                 out.extend(self.agg_decl() or [])
+        if self.nodes:
+            for _ in range(self.rng.randint(1, 2)):
+                out.extend(self.ref_decl())
         return out
 
     def gen_main(self):
@@ -1803,6 +2318,10 @@ class Gen:
     def program(self):
         if self.use_structs:
             self.gen_structs()
+        if self.use_refs:
+            self.gen_nodes()
+            # Fixed bodies that call nothing, so everything may call them.
+            self.builders = [self.gen_builder(st, i) for i, st in enumerate(self.nodes)]
         if self.use_generics:
             # Before every other function, so that methods, helpers and main
             # may all call them (each later generic may call the earlier ones).
@@ -1814,7 +2333,7 @@ class Gen:
         for i in range(self.rng.randint(0, 4)):
             self.funcs.append(self.gen_func(i))
         main = self.gen_main()
-        funcs = self.gfuncs + self.funcs
+        funcs = self.gfuncs + self.builders + self.funcs
         if self.opaque_used:
             funcs.insert(0, Func("opaque", [("x", "int")], [Return(Var("x", "int"))]))
         prog = Program(self.structs, funcs, main, self.seed, self.paren_mode, self.errors,

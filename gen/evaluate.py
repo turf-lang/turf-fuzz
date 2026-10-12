@@ -27,7 +27,8 @@ from tast import (INT_MIN, INT_MAX, StructT, ArrT, SliceT, ListT, Lit, BLit,
                   Continue, Return, SLit, SCall, ToStr, CharAt, ErrLit, Try,
                   RecoverP, ErrIs, ErrMsg, Defer, RecoverRun, EnumT, EnumLit,
                   EnumOf, EnumTo, EnumCount, Compare, DLit, CLit, Conv, CollT,
-                  CollNew, CMeth, CIndex, TryGet, CStmt, GCall, GGet, GPut)
+                  CollNew, CMeth, CIndex, TryGet, CStmt, GCall, GGet, GPut,
+                  RefT, Null, Heap, AddrOf, RefCast, IsNull)
 import math
 
 import sys
@@ -118,6 +119,25 @@ class ErrV:
 
     def __init__(self, variant, msg):
         self.variant, self.msg = variant, msg
+
+
+class RefV:
+    """A non-null reference: `to` is the struct storage (an SV) it points at,
+    on the heap (`heap(e)`, a defaulted `&S` field) or a caller's local
+    (`&s`). null is None. Two references are equal when they point at the same
+    storage; copying a struct that holds one shares what it points at."""
+
+    def __init__(self, to):
+        self.to = to
+
+    def __eq__(self, o):
+        return isinstance(o, RefV) and o.to is self.to
+
+    def __ne__(self, o):
+        return not self.__eq__(o)
+
+    def __hash__(self):
+        return id(self.to)
 
 
 class SV:
@@ -219,6 +239,10 @@ def zero(ty):
         return 0
     if isinstance(ty, EnumT):
         return EnumV(ty, 0)  # storage is zero: the first variant
+    if isinstance(ty, RefT):
+        # `&?S` defaults to null; `&S` cannot be null, so `::default()` gives
+        # it a fresh `S::default()` on the heap (FREEZE F-COLL-2).
+        return None if ty.nullable else RefV(zero(ty.st))
     if isinstance(ty, StructT):
         return SV({n: zero(t) for n, t in ty.fields})
     if isinstance(ty, ArrT):
@@ -276,19 +300,30 @@ class _Machine:
         if isinstance(e, Var):
             return env[e.name]
         if isinstance(e, Field):
-            return self.obj(e.base, env).f[e.name]
+            return self.target(e.base, env).f[e.name]
         if isinstance(e, Index):
             o = self.obj(e.base, env)
             i = self.ev(e.idx, env)
             return o.items[self.norm(o, i, e.base, False)]
         return self.ev(e, env)
 
+    def target(self, e, env):
+        """The struct storage a field access or method call on e reaches:
+        e's own value, or what it points at when e is a reference. The
+        generator only reads through a reference the compiler can prove
+        non-null, so a null here is a generator bug, never a program result."""
+        v = self.obj(e, env)
+        if isinstance(e.ty, RefT):
+            assert v is not None, "null dereference in a generated program"
+            return v.to
+        return v
+
     def locate(self, place, env, for_set=True):
         """(container, key) of a place; indices are evaluated outer to inner."""
         if isinstance(place, Var):
             return env, place.name
         if isinstance(place, Field):
-            return self.obj(place.base, env).f, place.name
+            return self.target(place.base, env).f, place.name
         if isinstance(place, Index):
             o = self.obj(place.base, env)
             i = self.ev(place.idx, env)
@@ -408,6 +443,18 @@ class _Machine:
             return env[e.err].variant == e.variant
         if isinstance(e, ErrMsg):
             return env[e.err].msg
+        if isinstance(e, Null):
+            return None
+        if isinstance(e, Heap):
+            return RefV(cp(self.ev(e.e, env)))  # a copy: later writes to e miss it
+        if isinstance(e, AddrOf):
+            return RefV(self.obj(e.place, env))  # the caller's own storage
+        if isinstance(e, RefCast):
+            v = self.ev(e.e, env)
+            assert v is not None, "cast of null to &T in a generated program"
+            return v
+        if isinstance(e, IsNull):
+            return (self.ev(e.e, env) is None) != e.neg
         raise TypeError(e)
 
     def coll_method(self, c, name, a):
@@ -695,7 +742,7 @@ class _Machine:
                 self.out.append("%d\n" % v)
         elif isinstance(s, MethodCall):
             args = [self.ev(a, env) for a in s.args]  # arguments, then receiver
-            recv = self.obj(s.recv, env)
+            recv = self.target(s.recv, env)
             self.call_method(self.methods[(s.recv.ty.name, s.method)], recv, args)
         elif isinstance(s, Push):
             lv = self.obj(s.base, env)
@@ -714,6 +761,8 @@ class _Machine:
             while True:
                 self.line = s.line
                 self.tick()
+                if s.guard is not None and env[s.guard.name] is None:
+                    break
                 if not env[s.counter] < s.bound:
                     break
                 self.line = s.incr_line

@@ -12,7 +12,7 @@ are silent; a disagreement is a finding, not a rule.
 | Rule | Source |
 |---|---|
 | `int` is 64-bit signed. `bool` is a distinct type; `&&`, `\|\|`, `!` yield `bool`. | doc `docs/reference/variables_and_types.md`; `FREEZE.md` 6.2 |
-| Generated types: `int`, `bool`, `string`, `double`, `int32`, `char`, enums (locals, struct fields, array elements; `int`, `string` and structs also as List elements), structs, sized arrays `T[N]` (also 2-D), `T[]` (parameters and `.copy()` locals), `List<T>` (locals; `List<int>` also as a helper parameter), `Stack`/`Queue`/`Set`/`Map` (locals). User generics: `fn<T>` helpers and one generic struct (locals). Pointers and references, error payloads and state machines are out of subset. | scope |
+| Generated types: `int`, `bool`, `string`, `double`, `int32`, `char`, enums (locals, struct fields, array elements; `int`, `string` and structs also as List elements), structs, sized arrays `T[N]` (also 2-D), `T[]` (parameters and `.copy()` locals), `List<T>` (locals; `List<int>` also as a helper parameter), `Stack`/`Queue`/`Set`/`Map` (locals). User generics: `fn<T>` helpers and one generic struct (locals). Safe references `&S` and `&?S` to structs (locals, parameters, struct fields, List elements; see References). Raw pointers, references to non-structs, error payloads and state machines are out of subset. | scope |
 | Every local is initialized at declaration, except `mut a: T[N];`, which the generator always follows at once with one element write (see Aggregates, definite assignment). | doc `FREEZE.md` F-INIT-1 |
 | Declaration needs an explicit `: Type`; `mut`/`immut` forms are used. `immut` is only generated for a scalar with a non-literal-only initializer (see constant folding). Aggregates are always `mut`. | doc variables_and_types.md |
 
@@ -103,6 +103,33 @@ agree.
 | `fn<T> gN(c: int, a: T, b: T): T`: `T` is inferred from `a` and `b` at each call, and every distinct `T` is its own instantiation (F-GEN-1). The body is ordinary generated code over `c` and its own locals; `T` has no operations (F-GEN-3), so the only `T` expressions are `a` and `b`, returned. Arguments pass by value. Called at `int`, `bool`, `string`, `double` and enum types. | doc `generics_and_operators.md`, `FREEZE.md` 6.1; probe (g1.tr) |
 | `struct Gb0<T> { v: T, n: int }` with `fn<T> Gb0.put(x: T): void { self.v = x; self.n = self.n + 1; }` and `fn<T> Gb0.get(): T { return self.v; }`. `Gb0<X>` is a struct value like any other: copied by assignment, fields read and written, `Gb0::default()` where a declaration or assignment gives the type. Only as a local. | doc `structs_and_enums.md` ("Generic structs"); probe (g1.tr) |
 | A generic call's result has the type of its own instantiation. | turflang 813fb53 (before it, with `g<double>` and `g<int32>` both instantiated, a call on int32 arguments was typed double and a following `to int` was an internal compiler error) |
+
+## References (`&S`, `&?S`, `heap()`)
+
+Node structs `N0`, `N1` hold `val: int`, up to two plain fields and 1-3
+`&?Self` fields (one edge: a list; more: a tree or any graph); `N1` may also
+hold a `&?N0` and a `&N0`. A holder `H0` has `head: &?N`, and optionally
+`own: &N`, a node by value and an array of nodes. Programs build chains with
+`heap()` in loops, tie them into rings, walk them under null checks
+iteratively and recursively, and keep references in struct fields and Lists.
+Compiler under test: turflang ec236f2 (the two fixes below are in it).
+
+| Rule | Source |
+|---|---|
+| `heap(e)` copies the struct value `e` to the GC heap and yields a `&S`; later writes to `e` do not reach the copy. `e` is a local, a field, an array element or `S::default()`. | doc `docs/architecture/pointers_and_references.md` §1.3; probe (a1.tr) |
+| A reference is a pointer to one struct: `=`, passing, returning and copying a struct that holds one all share the pointee. Fields are read and written and methods called through a `&S` with no dereference syntax (`p.val`, `p.val += 1`, `p.m0()`), and a write is visible through every other reference to it. A struct cannot be read by value out of a reference (`mut s: S = p;` is E066), only its fields. | doc §1.3 ("Auto-deref"); probe (a1.tr, a2.tr, c1.tr, d1.tr) |
+| `null` is a `&?S` only. `&S` widens to `&?S` implicitly (initializer, assignment, argument, `push`); never back. `==`/`!=` compare identity between any two references to the same struct, `&S` and `&?S` mixed, and a `&?S` with `null`; a `&S` is never compared with `null`. | doc §1.3, §1.8; probe (a1.tr, i1.tr) |
+| A `&?S` is used (field, method) only where the compiler has proven it non-null, and only a **variable** compared directly with `null` is ever proven: `if (q != null) { }`, `q != null && ...`, the `else` of `if (q == null)`, after `if (q == null) { return ...; }`, and a `while (q != null && ...)` body. The generator hides the variable for the extent of its check, so nothing assigns it there; the one exception is the last statement of a walk, `w = w.rJ;`. | doc §1.8, `structs_and_enums.md` ("Self-referential structs"); probe (a5.tr, e1.tr, f1-f9.tr) |
+| A null check holds across a loop that does not assign the variable, inside it and after it. | turflang d896209 (before it, every loop dropped every null check: E081 on valid programs; `findings/rejected-valid/null-check-lost-at-loop`) |
+| A `&?S` that is not a variable (`p.r0`, a call result, `l[i]`) is never dereferenced, and a method call needs the same check as a field read: both are E081, the cast `(p.r0 to &S)` E082. Such a value is only compared with null, stored and passed. | turflang d896209, ec236f2 (before them these compiled and a null faulted or read garbage; `findings/unsound/nullable-deref-not-a-variable`); FREEZE 6.6 |
+| A checked `&?S` variable is still a `&?S` wherever a `&S` is required as a whole value; `(q to &S)` converts it, legal only inside the check (E082). | doc §1.8; probe (a6.tr, e1.tr) |
+| The two branches of `give` must have the same static type: `&S` and `&?S` do not mix, and `null` has no type there. `l[i] = e` on a `List<&?S>` takes exactly a `&?S` (not a `&S`, not `null`): operators never widen. `l.push(e)` is a method and does widen. | probe (e1.tr, j1.tr); FREEZE F-OP-1 for the operator |
+| `S::default()` gives a `&?S` field null and a `&S` field a fresh `S::default()` on the heap, one per field, also inside nested structs and fixed arrays of them. A zero-filled `mut a: T[N];` leaves a `&S` field null (the array-element hole), so it is never generated for such a `T`. | doc `structs_and_enums.md`, FREEZE F-COLL-2; probe (c5.tr, e3.tr) |
+| `&S` fields only point at earlier node types, so no type reaches itself through `&` (E147). | doc `docs/errors/codes/E147.txt` |
+| Assignment through a reference is value-first like every other: `mk(2).val = tr(3)` and `l[tr(0)].val = tr(3)` evaluate the right side, then the place. A `List<&S>` element is written through (`l[i].val = e`), since the element is a reference, not a temporary struct. | probe (d3.tr, i1.tr); FREEZE 6.19 ("It stops at a pointer or reference") |
+| `&s` on a struct local is a `&S` into the current frame. It is generated only as a call argument for a parameter the callee was generated never to keep (it reads and writes through it, passes it on to the same kind of parameter, and nothing else), so no address of a frame outlives the frame. Everything nearer the escape boundary belongs to the soundness oracle. | doc §1.9, FREEZE §6.13 F-MEM-5; probe (d1.tr, i1.tr) |
+| Walks are `while (w != null && c < K) { c++; ...; w = w.rJ; }` with a literal `K`: the counter ends a walk on a cycle. A recursive walker takes the depth `d` first, returns on `t == null`, then on `d <= 0`, and calls itself on 1-3 edges; callers pass a literal depth small enough for about 40 calls. | scope |
+| Not generated: arrays of references (no spelling exists: `&N[2]` is a reference to an array), `heap()` of a non-struct, references to scalars (`&int` has no read syntax that `printline` accepts), references as generic arguments or in `Stack`/`Queue`/`Set`/`Map`, `immut` references (no write through one: E060). | probe (a3.tr, c5.tr, e3.tr) |
 
 ## `Stack`, `Queue`, `Set`, `Map`
 

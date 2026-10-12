@@ -113,6 +113,30 @@ class CollT:
         return ty_str(self)
 
 
+class RefT:
+    """`&S` (never null) or `&?S` (nullable): a safe reference to a struct.
+    Fields and methods are reached through it with no dereference syntax."""
+
+    def __init__(self, st, nullable):
+        self.st, self.nullable = st, nullable
+
+    @property
+    def name(self):
+        return self.st.name  # a method call through a reference finds S's methods
+
+    def field_type(self, f):
+        return self.st.field_type(f)
+
+    def __eq__(self, o):
+        return isinstance(o, RefT) and o.st is self.st and o.nullable == self.nullable
+
+    def __hash__(self):
+        return hash(("ref", self.st.name, self.nullable))
+
+    def __repr__(self):
+        return ty_str(self)
+
+
 class EnumT:
     def __init__(self, name, variants):
         self.name, self.variants = name, variants
@@ -134,6 +158,8 @@ def ty_str(t):
         return t.name
     if isinstance(t, StructT):
         return t.name
+    if isinstance(t, RefT):
+        return ("&?" if t.nullable else "&") + t.st.name
     if isinstance(t, ArrT):
         # int[2][3] is 2 rows of 3: the outer size is written first.
         dims = []
@@ -167,6 +193,19 @@ def contains_string(t):
         return any(contains_string(ft) for _, ft in t.fields)
     if isinstance(t, (ArrT, SliceT, ListT)):
         return contains_string(t.elem)
+    return False
+
+
+def has_nonnull_ref(t):
+    """Does a value of type t hold a `&S` (inline, not behind a reference)?
+    A zero-filled `T[N]` declaration leaves such a field null (the
+    array-element `&U` hole, SEMANTICS.md), so it is never declared bare."""
+    if isinstance(t, RefT):
+        return not t.nullable
+    if isinstance(t, StructT):
+        return any(has_nonnull_ref(ft) for _, ft in t.fields)
+    if isinstance(t, (ArrT, SliceT, ListT)):
+        return has_nonnull_ref(t.elem)
     return False
 
 
@@ -356,11 +395,50 @@ STRING_FNS = {
 
 
 class Call:
-    ty = "int"
-
-    def __init__(self, fn, args):
+    def __init__(self, fn, args, ty="int"):
         self.fn = fn  # function name
         self.args = args
+        self.ty = ty  # int, or a `&S` for a node builder
+
+
+class Null:
+    """null, as a value of the `&?S` type ty."""
+
+    def __init__(self, ty):
+        self.ty = ty
+
+
+class Heap:
+    """heap(e): a copy of the struct value e on the GC heap, as a `&S`."""
+
+    def __init__(self, e):
+        self.e = e
+        self.ty = RefT(e.ty, False)
+
+
+class AddrOf:
+    """&place: a `&S` into the current frame. Only ever a call argument for a
+    parameter the callee does not keep (SEMANTICS.md, References)."""
+
+    def __init__(self, place):
+        self.place = place
+        self.ty = RefT(place.ty, False)
+
+
+class RefCast:
+    """(v to &S) for a `&?S` variable v inside its null check."""
+
+    def __init__(self, e):
+        self.e = e
+        self.ty = RefT(e.ty.st, False)
+
+
+class IsNull:
+    """e == null, or e != null when neg."""
+    ty = "bool"
+
+    def __init__(self, e, neg):
+        self.e, self.neg = e, neg
 
 
 class Give:
@@ -527,12 +605,15 @@ class If:
 
 
 class While:
-    """mut <counter>: int = 0; while <counter> < bound { <incr>; body }"""
+    """mut <counter>: int = 0; while <counter> < bound { <incr>; body }
+    With a guard (a `&?S` variable): `while (g != null && <counter> < bound)`,
+    a walk along a chain that the counter bounds even when it is a cycle."""
 
-    def __init__(self, counter, bound, incr_style, body):
+    def __init__(self, counter, bound, incr_style, body, guard=None):
         self.counter, self.bound = counter, bound
         self.incr_style = incr_style  # 0: c = c + 1; 1: c += 1; 2: c++
         self.body = body
+        self.guard = guard
         self.line = 0
         self.decl_line = 0
         self.incr_line = 0
@@ -639,6 +720,9 @@ class Func:
         self.fallible = fallible  # returns !int
         self.rec = rec            # first parameter is the recursion depth `d`
         self.generic = False      # fn<T> name(c: int, a: T, b: T): T
+        self.ret = None           # a `&S` for a node builder; None is int
+        self.rec_max = 6          # the deepest literal depth a caller passes
+        self.borrows = set()      # `&S` parameters the body never keeps
 
 
 class Method:
@@ -675,8 +759,10 @@ def _prec(e):
         return PREC_UNARY
     if isinstance(e, (Lit, DLit)) and (e.v < 0 or str(e.v).startswith("-")):
         return PREC_UNARY
-    if isinstance(e, ErrIs):
+    if isinstance(e, (ErrIs, IsNull)):
         return PREC["=="]
+    if isinstance(e, AddrOf):
+        return PREC_UNARY
     if isinstance(e, Try):
         return 1  # parenthesized inside any operator: `(try f(x)) * 2`
     return PREC_ATOM
@@ -828,6 +914,16 @@ class _Renderer:
             return "%s == %s::%s" % (e.err, e.etype, e.variant)
         if isinstance(e, ErrMsg):
             return "%s.message" % e.err
+        if isinstance(e, Null):
+            return "null"
+        if isinstance(e, Heap):
+            return "heap(%s)" % self.expr(e.e)
+        if isinstance(e, AddrOf):
+            return "&" + self.expr(e.place, PREC_ATOM)
+        if isinstance(e, RefCast):
+            return "(%s to %s)" % (self.expr(e.e, PREC_ATOM), ty_str(e.ty))
+        if isinstance(e, IsNull):
+            return "%s %s null" % (self.expr(e.e, PREC["=="]), "!=" if e.neg else "==")
         raise TypeError(e)
 
     # -- statements
@@ -911,7 +1007,11 @@ class _Renderer:
             self.emit(ind, "}")
         elif isinstance(s, While):
             s.decl_line = self.emit(ind, "mut %s: int = 0;" % s.counter)
-            s.line = self.emit(ind, "while %s < %d {" % (s.counter, s.bound))
+            if s.guard is None:
+                s.line = self.emit(ind, "while %s < %d {" % (s.counter, s.bound))
+            else:
+                s.line = self.emit(ind, "while (%s != null && %s < %d) {" % (
+                    s.guard.name, s.counter, s.bound))
             c = s.counter
             incr = ("%s = %s + 1;" % (c, c), "%s += 1;" % c, "%s++;" % c)[s.incr_style]
             s.incr_line = self.emit(ind + 1, incr)
@@ -938,8 +1038,8 @@ class _Renderer:
         elif f.generic:
             self.emit(0, "fn<T> %s(%s): T {" % (f.name, self.params(f.params)))
         else:
-            self.emit(0, "fn %s(%s): %s {" % (f.name, self.params(f.params),
-                                             "!int" if f.fallible else "int"))
+            ret = ty_str(f.ret) if f.ret is not None else "!int" if f.fallible else "int"
+            self.emit(0, "fn %s(%s): %s {" % (f.name, self.params(f.params), ret))
         self.block(f.body, 1)
         self.emit(0, "}")
         self.emit(0, "")
