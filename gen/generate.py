@@ -23,6 +23,10 @@ Subset:
     `char` with the `to` conversions between them and int; Stack, Queue,
     Set and Map locals (shared, copied, emptied, missed); user generics
     (`fn<T>` helpers and a generic struct with methods, at several types);
+  * reference graphs: node structs with `&?Self` fields built with heap()
+    (lists, trees, rings), `&S`/`&?S` locals, parameters, struct fields and
+    List elements, null checks in every form the compiler narrows, bounded
+    walks, recursive walkers, node builders, `&local` lent to a callee;
   * if/elseif/else, while with a bounded counter, `for i in a..b`,
     break/continue, helper functions returning int (calls only go to
     earlier functions, so no recursion), early return, printing.
@@ -51,7 +55,8 @@ from tast import (INT_MIN, INT_MAX, StructT, ArrT, SliceT, ListT, is_scalar,  # 
                   RecoverP, ErrIs, ErrMsg, Defer, RecoverRun, EnumT, EnumLit,
                   EnumOf, EnumTo, EnumCount, Compare, DLit, CLit, Conv, CollT,
                   CollNew, CMeth, CIndex, TryGet, CStmt, GCall, GGet, GPut,
-                  RefT, Null, Heap, AddrOf, RefCast, IsNull, has_nonnull_ref)
+                  RefT, Null, Heap, AddrOf, RefCast, IsNull, has_nonnull_ref,
+                  ErrArm, ErrCompare)
 import evaluate as ev  # noqa: E402
 
 BOUNDARY = [INT_MAX, INT_MIN, INT_MAX - 1, INT_MIN + 1, 2147483647, -2147483648,
@@ -66,7 +71,12 @@ BOUNDARY = [INT_MAX, INT_MIN, INT_MAX - 1, INT_MIN + 1, 2147483647, -2147483648,
 # BORROW: a `&S` parameter that may point into the caller's frame, so the
 # body reads and writes through it but never stores, returns or passes on
 # the reference itself except to another BORROW parameter.
-MUT, IMMUT, PARAM, SELF, VIEW, SLICE_PARAM, LOOP, NARROWED, BORROW = range(9)
+#
+# BIND: a payload field bound by an error pattern. Immutable all the way
+# through: no field write, mutating method, push or `[]=` on it, even when it
+# is a reference or a List (E060). It may be read, passed and copied to a
+# `mut` variable, which may then write (SEMANTICS.md, Error payloads).
+MUT, IMMUT, PARAM, SELF, VIEW, SLICE_PARAM, LOOP, NARROWED, BORROW, BIND = range(10)
 WRITABLE = (MUT, SELF, VIEW, SLICE_PARAM)
 
 
@@ -144,6 +154,10 @@ def reaches(t, target, through_lists=False):
 
 class Overflow(Exception):
     pass
+
+
+def arms_has(arms, etype, variant):
+    return any(a.etype == etype and a.variant == variant for a in arms)
 
 
 def const_value(e):
@@ -243,6 +257,8 @@ def check_foldable(e):
         check_foldable(e.e)
         return
     if isinstance(e, ErrLit):
+        for a in e.args:
+            check_foldable(a)
         if e.msg is not None:
             check_foldable(e.msg)
         return
@@ -310,6 +326,8 @@ class Gen:
         self.errors = []
         if self.use_errors:
             self.errors = [("E0", ["A", "B", "C"][:r.randint(1, 3)])]
+        self.perr = None       # ("E1", [(variant, [(field, type)])]): payloads
+        self.sweep = False     # generating the body of a payload sweep
         self.enums = []
         if r.random() < 0.35:
             names = ["Red", "Green", "Blue", "Gold"]
@@ -509,8 +527,9 @@ class Gen:
         out = []
         for e in self.scope.entries():
             # A `&S` of any kind is written through: the storage is not the
-            # variable's own.
-            if writable and e.kind not in WRITABLE and not is_ref(e.ty, False):
+            # variable's own. Except a pattern binding, immutable throughout.
+            if writable and (e.kind == BIND
+                             or (e.kind not in WRITABLE and not is_ref(e.ty, False))):
                 continue
             out.append(e)
         return out
@@ -1081,7 +1100,7 @@ class Gen:
         st = self.pick(self.nodes)
         t, tn = RefT(st, False), RefT(st, True)
         edges = self.self_refs(st)
-        roots = [e.name for e in self.scope.entries() if e.ty == t]
+        roots = [e.name for e in self.scope.entries() if e.ty == t and e.kind != BIND]
         vals = self.ref_vars(t)
         if roots and vals and self.chance(0.4):
             x = Var(self.pick(roots), t)
@@ -1125,7 +1144,7 @@ class Gen:
         """l[i].val = e on a List<&N>: written through the element (the
         element is a reference, so this is not E098)."""
         ls = [e for e in self.scope.entries()
-              if isinstance(e.ty, ListT) and is_ref(e.ty.elem, False)]
+              if isinstance(e.ty, ListT) and is_ref(e.ty.elem, False) and e.kind != BIND]
         if not ls:
             return None
         e = self.pick(ls)
@@ -1696,8 +1715,13 @@ class Gen:
             got = self.defer_stmt()
             if got:
                 return [got]
-        if self.use_errors and not self.in_method and not self.in_run and self.chance(0.06):
+        if self.use_errors and not self.in_method and not self.in_run and self.chance(0.1):
             got = self.recover_run(depth)
+            if got:
+                return got
+        if self.perr is not None and not self.in_method and not self.in_run and self.chance(0.1):
+            got = (self.payload_sweep(depth) if self.chance(0.4)
+                   else self.recover_run(depth, payload=True))
             if got:
                 return got
         if depth < 3 and self.chance(0.05 if self.enums else 0.02):
@@ -1746,11 +1770,139 @@ class Gen:
         return Return(self.int_expr(2))
 
     def err_lit(self):
-        name, variants = self.errors[0]
         msg = None
         if self.use_strings and self.chance(0.4):
             msg = self.str_expr(1)
+        if self.perr is not None and self.chance(0.6):
+            got = self.payload_lit(msg)
+            if got is not None:
+                return got
+        name, variants = self.errors[0]
         return ErrLit(name, self.pick(variants), msg)
+
+    def gen_payload_error(self):
+        """error E1 { P0(x0: T, ...), ..., [Q] }: variants carrying data. The
+        fields are heap values where the program has them (strings, structs
+        holding strings and references, Lists, references), so the error
+        value is what keeps them alive on its way up through `try`."""
+        variants = []
+        for i in range(self.rng.randint(1, 4)):
+            fields = [("x%d" % j, self.payload_type())
+                      for j in range(self.pick([1, 1, 2, 3]))]
+            variants.append(("P%d" % i, fields))
+        if self.chance(0.5):
+            variants.append(("Q", []))
+        self.perr = ("E1", variants)
+
+    def payload_type(self):
+        opts = ["int", "int"]
+        if self.use_strings:
+            opts += ["string"] * 3
+        if self.structs:
+            opts += [self.pick(self.structs)] * 3
+        if self.use_lists:
+            opts += [ListT("int")] * 2
+            if self.use_strings:
+                opts.append(ListT("string"))
+        if self.nodes:
+            opts += [RefT(self.pick(self.nodes), self.chance(0.5))] * 2
+        if self.enums:
+            opts.append(self.pick(self.enums))
+        if self.use_numeric:
+            opts.append("double")
+        return self.pick(opts)
+
+    def payload_lit(self, msg, variant=None):
+        """E1::Pk(a0, a1[, msg]): one argument per field, in order. A List
+        field takes a List in scope (shared with it), a copy, or a fresh
+        `List::default()`, whose type comes from the field."""
+        name, variants = self.perr
+        v, fields = variant or self.pick(variants)
+        args = []
+        for _, ft in fields:
+            if isinstance(ft, ListT):
+                a = self.list_arg(ft) if self.chance(0.7) else None
+                if a is None:
+                    a = ListNew(ft)
+            else:
+                a = self.value_expr(ft, 1)
+            if a is None:
+                return None
+            args.append(a)
+        return ErrLit(name, v, msg, args, [ft for _, ft in fields])
+
+    def bind_touch(self, name, ty):
+        """Print something read from a bound payload field."""
+        v = Var(name, ty)
+        if ty in ("int", "bool", "string", "double"):
+            return Print(v)
+        if isinstance(ty, EnumT):
+            return Print(EnumTo(v, "int"))
+        if isinstance(ty, ListT):
+            return Print(Length(v))
+        if is_ref(ty, True):
+            return Print(IsNull(v, self.chance(0.5)))
+        if is_ref(ty, False):
+            return Print(Field(v, "val"))
+        for target in ("int", "string", "bool"):
+            got = self.descend(v, ty, target, 1) if reaches(ty, target) else None
+            if got is not None and got is not v:
+                return Print(got)
+        return None
+
+    def err_compare(self, err, depth):
+        """compare (err) { matches E1::Pk(b0, _, 3) if guard: ... done ...
+        otherwise: ... } -- the only way a payload is read. Each variant
+        appears once, or twice when its first arm can fail (a literal
+        sub-pattern or a guard) and a catch-all arm for it follows."""
+        ename, variants = self.perr
+        pool = [(ename, v, fields) for v, fields in variants]
+        pool += [(self.errors[0][0], v, []) for v in self.errors[0][1]]
+        self.rng.shuffle(pool)
+        arms = []
+        for etype, v, fields in pool[:self.rng.randint(1, min(4, len(pool)))]:
+            refutable = True
+            while refutable:
+                self.scope.push()
+                n = len(fields)
+                rest = n > 0 and self.chance(0.2)
+                if rest:
+                    n = self.rng.randint(0, n - 1)
+                pats, bound, refutable = [], [], False
+                for j in range(n):
+                    ft = fields[j][1]
+                    k = self.rng.random()
+                    if ft == "int" and k < 0.15 and not arms_has(arms, etype, v):
+                        pats.append(("lit", Lit(self.rng.randint(-2, 3))))
+                        refutable = True
+                    elif k < 0.85:
+                        b = self.new_name("pb")
+                        self.scope.declare(b, ft, BIND)
+                        pats.append(("bind", b, ft))
+                        bound.append((b, ft))
+                    else:
+                        pats.append(("skip",))
+                guard = None
+                if self.chance(0.25) and not arms_has(arms, etype, v):
+                    guard = self.bool_expr(2)  # may read the bindings
+                    refutable = True
+                body = []
+                if bound:
+                    t = self.bind_touch(*self.pick(bound))
+                    if t is not None:
+                        body.append(t)
+                for _ in range(self.rng.randint(0, 2)):
+                    body.extend(self.gen_stmt(depth + 1))
+                if self.chance(0.35):
+                    body.append(self.jump())
+                elif not body:
+                    body.append(self.mix())
+                self.scope.pop()
+                arms.append(ErrArm(etype, v, pats, rest, guard, body, len(fields)))
+                # A second, irrefutable arm for the same variant, sometimes.
+                refutable = refutable and self.chance(0.5)
+        els = self.gen_block(self.rng.randint(1, 2), depth + 1) or [self.mix()]
+        return ErrCompare(err, arms, els)
 
     def defer_stmt(self):
         """defer <print | chk mix | scalar assignment>; never a jump (rejected)
@@ -1768,11 +1920,14 @@ class Gen:
             self.in_defer = False
         return Defer(inner) if inner is not None else None
 
-    def recover_run(self, depth):
+    def recover_run(self, depth, payload=False, karg=None):
         """mut v: int = f(...) recover as err run { ...; if err == E0::X { jump }
         jump };  The block must diverge (int success type): `return`, or
         `break`/`continue` in a loop."""
         fallible = [f for f in self.funcs if f.fallible]
+        if payload:
+            # A callee built to fail with every payload variant (gen_func).
+            fallible = [f for f in fallible if any(n == "k" for n, _ in f.params)]
         if not fallible:
             return None
         callee = self.pick(fallible)
@@ -1784,10 +1939,12 @@ class Gen:
         call = self.expr_ok(lambda: self.call_args(callee, depth), None)
         if call is None:
             return None
+        if karg is not None:
+            call.args[[n for n, _ in callee.params].index("k")] = karg
         self.cost += spent
         # A third of the time the plain form, `recover run { ... }`: no binding,
         # so nothing in the block can ask which error it was.
-        err = None if self.chance(0.33) else self.new_name("err")
+        err = None if self.chance(0.33) and not payload else self.new_name("err")
         name_, variants = self.errors[0]
         self.in_run = True
         self.scope.push()
@@ -1797,7 +1954,13 @@ class Gen:
                 body.append(Print(ErrMsg(err)))
             if self.chance(0.6):
                 body.append(self.mix() if self.chance(0.5) else self.print_stmt())
+            if err is not None and self.perr is not None and (payload or self.chance(0.7)):
+                body.append(self.err_compare(err, depth))
             if err is not None:
+                if self.perr is not None and self.chance(0.4):
+                    # `==` on a variant with fields names it bare; it tests
+                    # which variant, never the payload.
+                    name_, variants = self.perr[0], [v for v, _ in self.perr[1]]
                 body.append(If([[ErrIs(err, name_, self.pick(variants)), [self.jump()], 0]], None))
             elif self.chance(0.4):
                 body.append(If([[self.bool_expr(2), [self.jump()], 0]], None))
@@ -1810,9 +1973,37 @@ class Gen:
         return [RecoverRun(name, call, err, body)]
 
     def jump(self):
+        if self.sweep:
+            # Inside a payload sweep: go on to the next variant, mostly.
+            return Continue() if self.chance(0.9) else Break()
         if self.in_loop and self.chance(0.35):
             return self.pick([Break, Continue])()
         return self.return_stmt()
+
+    def payload_sweep(self, depth):
+        """for r in 0..n+2 { mut v: int = fK(.., r, ..) recover as err run {
+        compare (err) { ... } continue; }; chk = mix(v); }
+        Calls a thrower once per `k`, so each payload variant is constructed,
+        carried out and matched in one run."""
+        throwers = [f for f in self.funcs
+                    if f.fallible and any(n == "k" for n, _ in f.params)]
+        if not throwers or depth >= 2 or self.in_run or self.in_method:
+            return None
+        n = len(self.perr[1]) + 2
+        r = self.new_name("r")
+        saved = self.mult
+        self.mult *= n
+        self.scope.push()
+        self.scope.declare(r, "int", LOOP)
+        self.in_loop += 1
+        self.sweep = True
+        got = self.recover_run(depth + 1, True, Var(r, "int"))
+        self.sweep = False
+        body = (got or []) + [self.mix()]
+        self.in_loop -= 1
+        self.scope.pop()
+        self.mult = saved
+        return [ForRange(r, 0, n, body)] if got else None
 
     def agg_stmt(self, depth):
         if self.nodes and self.chance(0.4):
@@ -2038,7 +2229,8 @@ class Gen:
             return None
         st = self.pick(cands)
         # Through a reference the receiver is the variable itself: `p.m0()`.
-        refs = [e for e in self.scope.entries() if e.ty == RefT(st, False)]
+        refs = [e for e in self.scope.entries()
+                if e.ty == RefT(st, False) and e.kind != BIND]
         if refs and self.chance(0.5):
             recv = Var(self.pick(refs).name, RefT(st, False))
         else:
@@ -2054,7 +2246,8 @@ class Gen:
         return MethodCall(recv, m.name, args)
 
     def list_stmt(self):
-        ls = [e for e in self.scope.entries() if isinstance(e.ty, ListT)]
+        ls = [e for e in self.scope.entries()
+              if isinstance(e.ty, ListT) and e.kind != BIND]
         if not ls:
             return None
         e = self.pick(ls)
@@ -2227,6 +2420,9 @@ class Gen:
             params.append(("t", RefT(st, True)))
             own = self.self_refs(st)
             edges = self.rng.sample(own, self.rng.randint(1, len(own)))
+        thrower = fallible and self.perr is not None and self.chance(0.85)
+        if thrower:
+            params.append(("k", "int"))
         for i in range(self.rng.randint(0, 3)):
             params.append(("p%d" % i, self.param_type()))
         f = Func("f%d" % idx, params, [], fallible, rec)
@@ -2248,6 +2444,22 @@ class Gen:
             # Base case first, so every level does at most one body's work.
             body.append(If([[Bin("<=", Var("d", "int"), Lit(0)), [self.return_stmt()], 0]], None))
         body.extend(self.initial_vars())
+        if thrower:
+            # Fails with variant i when `k % (n + 1) == i`, so most calls fail
+            # and every variant is reached; built after the locals, which the
+            # payloads are made from.
+            vs = self.perr[1]
+            for i, variant in enumerate(vs):
+                msg = self.str_expr(1) if self.use_strings and self.chance(0.3) else None
+                lit = self.expr_ok(lambda: self.payload_lit(msg, variant), None)
+                if lit is None:
+                    continue
+                hit = Bin("==", Bin("%", Var("k", "int"), Lit(len(vs) + 1)), Lit(i))
+                body.append(If([[hit, [Return(lit)], 0]], None))
+        elif fallible and self.chance(0.7):
+            # One failure path that is always there; the random early returns
+            # are rare.
+            body.append(If([[self.bool_expr(2), [Return(self.err_lit())], 0]], None))
         body.extend(self.gen_block(self.rng.randint(1, 6), 0))
         if walker:
             for edge in edges:
@@ -2307,6 +2519,8 @@ class Gen:
         self.scope.declare("chk", "int", MUT)
         body = [Decl("chk", "int", Lit(0), True)]
         body.extend(self.initial_vars())
+        if self.perr is not None and self.chance(0.8):
+            body.extend(self.payload_sweep(0) or [])
         body.extend(self.gen_block(self.rng.randint(4, 14), 0))
         body.append(Print(Var("chk", "int")))
         if self.chance(0.7):
@@ -2322,6 +2536,8 @@ class Gen:
             self.gen_nodes()
             # Fixed bodies that call nothing, so everything may call them.
             self.builders = [self.gen_builder(st, i) for i, st in enumerate(self.nodes)]
+        if self.use_errors and self.chance(0.6):
+            self.gen_payload_error()
         if self.use_generics:
             # Before every other function, so that methods, helpers and main
             # may all call them (each later generic may call the earlier ones).
@@ -2340,6 +2556,8 @@ class Gen:
                        self.enums)
         if self.gstruct_used:
             prog.gstructs = ["Gb0"]
+        if self.perr is not None:
+            prog.payload_errors = [self.perr]
         return prog
 
 

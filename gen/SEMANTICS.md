@@ -96,6 +96,26 @@ agree.
 | `defer { ... }` is not accepted (E103), so a deferred print renders as `defer io::flush();` then `defer io::printline(e);` (LIFO: print, then flush). | probe |
 | A recursive helper takes the depth `d` first, returns at `d <= 0` before anything else, and calls itself once per level at the top of its body with `d - 1`; callers pass a literal 0..6. 100000-deep recursion works (probe), so depth is never the limit. | probe (d1.tr) |
 
+## Error payloads
+
+A second error type, `error E1 { P0(x0: T, ...), ..., Q }`, whose variants
+carry 1-3 fields: `string`, `int`, an enum, `double`, a struct (also a node
+or holder struct, with its references), `List<int>` / `List<string>`, `&N`,
+`&?N`. "Thrower" helpers fail with variant `i` when `k % (n + 1) == i`, and a
+sweep loop calls one for every `k`, so each variant is built, carried out
+(through `try` when the caller is fallible) and matched in one run.
+
+| Rule | Source |
+|---|---|
+| `E1::P(a0, a1)` takes one argument per field, in order, evaluated left to right; one more trailing `string` is the message. A variant with fields is never written bare as a value. Any `!int` function may return either error type. | doc `error_handling.md` ("Payloads: data on a variant"); probe (p2/a1.tr) |
+| A payload field holds its argument as a location of that type would: a struct is copied, a `List` and a reference are shared with every other holder (a `List` pushed to before the `return` and one aliased after the match are the caller's own list). | probe (p2/a1.tr, b1.tr); FREEZE F-COLL-1 for the List |
+| `E1::P(List::default())` builds a `List` of the field's declared type. | turflang bfa72ba (before it: an internal compiler error; `findings/llvm-error/generic-default-as-payload`) |
+| A payload is read only by `compare (err) { matches E1::P(b0, _, 3) if g: ... done ... otherwise: ... }` on the `err` of `recover as err run`. Arms are tried in order; an arm runs if the variant is the same, every literal sub-pattern equals its field, and the guard (which sees the bindings) is true; a failed guard goes on to the next arm. A name binds, `_` skips, `..` ends a pattern that lists fewer fields; a variant with no fields has no parentheses. `otherwise` is always present (`err` is an open union: E093). | doc `error_handling.md` ("Reading a payload"), `control_flow.md`; probe (p2/a1.tr, b1.tr) |
+| A binding is immutable throughout: no field write, no mutating method, no `push`, no write through it even when it is a reference (all E060). It may be read, passed to a function (one that mutates through it included), and copied to a `mut` variable that then writes. The generator reads bindings, passes them and aliases them. | probe (p2/a1.tr: E060 on `r.val = 4` and `items.push(5)`; b1.tr, b2.tr) |
+| `err == E1::P` names a variant with fields bare and tests which variant it is, never its fields or message; `err.message` is the trailing message, `""` if none. | doc `error_handling.md`; probe (p2/a1.tr) |
+| A variant gets one arm, or a refutable arm (literal or guard) followed by a catch-all arm for the same variant. | scope |
+| Not generated: `compare` on a value of a declared error type, nested struct patterns inside a payload pattern, string literal sub-patterns, payloads of arrays, collections other than `List`, generic structs. | scope |
+
 ## User generics
 
 | Rule | Source |

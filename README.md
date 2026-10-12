@@ -14,7 +14,7 @@ minimized reproducer.
 |---|---|
 | `compiler.lock` | turflang commit under test; every finding records it |
 | `tier0/` | black-box token/line mutation crash fuzzer (port of turflang `scripts/fuzz/crash_fuzz.py`) |
-| `gen/` | typed program generator + reference evaluator (knows the expected result): ints, bools, bitwise ops, structs with methods, arrays, slices, `List`; every rule it relies on is in `gen/SEMANTICS.md`. `gen/trace.py SEED` finds the first statement where a wrong answer diverges |
+| `gen/` | typed program generator + reference evaluator (knows the expected result): ints, bools, bitwise ops, structs with methods, arrays, slices, collections, strings, errors, enums, generics, reference graphs on the GC heap; every rule it relies on is in `gen/SEMANTICS.md`. `gen/trace.py SEED` finds the first statement where a wrong answer diverges |
 | `oracles/` | differential (`-O` levels, `-g`, GC stress/validate), runtime, soundness |
 | `engine/` | libFuzzer in-process target over `include/turf/Analysis.h` (C++, clang) |
 | `triage/` | signature bucketing, minimization, issue text |

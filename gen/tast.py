@@ -345,11 +345,14 @@ class EnumCount:
 
 
 class ErrLit:
-    """E::V or E::V("message"): an error value, only ever returned."""
+    """E::V, E::V("message"), or for a variant with payload fields
+    E::V(a0, a1[, "message"]): an error value, only ever returned.
+    args are the payload arguments, ftypes their declared field types."""
     ty = "error"
 
-    def __init__(self, etype, variant, msg=None):
+    def __init__(self, etype, variant, msg=None, args=None, ftypes=None):
         self.etype, self.variant, self.msg = etype, variant, msg
+        self.args, self.ftypes = args or [], ftypes or []
 
 
 class Try:
@@ -670,6 +673,28 @@ class Compare:
         self.line = 0
 
 
+class ErrArm:
+    """matches E::V(p0, p1[, ..]) [if guard]: body done
+    pats: ("bind", name, type) binds the field (immutably), ("skip",) is `_`,
+    ("lit", Lit) tests an int field; rest: the pattern ends in `..` after
+    pats. A variant with no fields has no parentheses."""
+
+    def __init__(self, etype, variant, pats, rest, guard, body, nfields):
+        self.etype, self.variant, self.pats, self.rest = etype, variant, pats, rest
+        self.guard, self.body, self.nfields = guard, body, nfields
+
+
+class ErrCompare:
+    """compare (err) { <ErrArm>... otherwise: els }  on the `err` of a
+    `recover as err run` block: the first arm whose variant, literal
+    sub-patterns and guard all hold runs; else `otherwise` (always present:
+    `err` is an open union, E093)."""
+
+    def __init__(self, err, arms, els):
+        self.err, self.arms, self.els = err, arms, els
+        self.line = 0
+
+
 class RecoverRun:
     """mut name: int = call recover as err run { body };   body diverges.
     err None is the plain form, `recover run { body }`, with no binding."""
@@ -740,6 +765,8 @@ class Program:
     def __init__(self, structs, funcs, main, seed=0, paren_mode="min", errors=None,
                  enums=None):
         self.errors = errors or []  # [(error type name, [variants])]
+        # [(error type name, [(variant, [(field, type)])])]: payload variants
+        self.payload_errors = []
         self.enums = enums or []    # [EnumT]
         self.gstructs = []          # names of generic struct templates (`Gb0`)
         self.structs = structs
@@ -784,11 +811,18 @@ def walk_stmts(stmts):
                 yield from walk_stmts(body)
             if s.els:
                 yield from walk_stmts(s.els)
+        elif isinstance(s, ErrCompare):
+            for arm in s.arms:
+                yield from walk_stmts(arm.body)
+            yield from walk_stmts(s.els)
 
 
 def _uses_list(p):
     # A helper may take a List parameter with no List local anywhere.
     if any(isinstance(t, ListT) for f in p.funcs for _, t in f.params):
+        return True
+    # ... or an error variant may carry one.
+    if any(isinstance(t, ListT) for _, vs in p.payload_errors for _, fs in vs for _, t in fs):
         return True
     bodies = [f.body for f in p.funcs + [p.main]]
     bodies += [m.body for st in p.structs for m in st.methods]
@@ -905,7 +939,10 @@ class _Renderer:
             return "%s::COUNT" % e.enum.name
         if isinstance(e, ErrLit):
             s = "%s::%s" % (e.etype, e.variant)
-            return s if e.msg is None else s + "(%s)" % self.expr(e.msg)
+            args = [self.expr(a) for a in e.args]
+            if e.msg is not None:
+                args.append(self.expr(e.msg))  # the message follows the fields
+            return s + "(%s)" % ", ".join(args) if args else s
         if isinstance(e, Try):
             return "try %s" % self.expr(e.call)
         if isinstance(e, RecoverP):
@@ -971,6 +1008,26 @@ class _Renderer:
             if s.els is not None:
                 self.emit(ind + 1, "otherwise:")
                 self.block(s.els, ind + 2)
+            self.emit(ind, "}")
+        elif isinstance(s, ErrCompare):
+            s.line = self.emit(ind, "compare (%s) {" % s.err)
+            for arm in s.arms:
+                head = "%s::%s" % (arm.etype, arm.variant)
+                if arm.nfields:
+                    parts = []
+                    for p in arm.pats:
+                        parts.append(p[1] if p[0] == "bind" else "_" if p[0] == "skip"
+                                     else self.expr(p[1]))
+                    if arm.rest:
+                        parts.append("..")
+                    head += "(%s)" % ", ".join(parts)
+                if arm.guard is not None:
+                    head += " if %s" % self.expr(arm.guard)
+                arm.line = self.emit(ind + 1, "matches %s:" % head)
+                self.block(arm.body, ind + 2)
+                self.emit(ind + 1, "done")
+            self.emit(ind + 1, "otherwise:")
+            self.block(s.els, ind + 2)
             self.emit(ind, "}")
         elif isinstance(s, RecoverRun):
             how = "recover run {" if s.err is None else "recover as %s run {" % s.err
@@ -1075,6 +1132,14 @@ class _Renderer:
         for st in self.p.structs:
             self.emit(0, "struct %s { %s }" % (st.name, ", ".join(
                 "%s: %s" % (n, ty_str(t)) for n, t in st.fields)))
+            self.emit(0, "")
+        for name, variants in self.p.payload_errors:
+            # After the structs its payload fields name.
+            decls = []
+            for v, fields in variants:
+                decls.append(v if not fields else "%s(%s)" % (v, ", ".join(
+                    "%s: %s" % (fn, ty_str(ft)) for fn, ft in fields)))
+            self.emit(0, "error %s { %s }" % (name, ", ".join(decls)))
             self.emit(0, "")
         for st in self.p.structs:
             for m in st.methods:

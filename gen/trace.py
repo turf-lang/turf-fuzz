@@ -63,6 +63,11 @@ def instrument(stmts, visible, tags):
             s.arms = [(p, instrument(b, scope, tags)) for p, b in s.arms]
             if s.els is not None:
                 s.els = instrument(s.els, scope, tags)
+        elif isinstance(s, tast.ErrCompare):
+            for arm in s.arms:
+                keep = arm.body[-1:] if isinstance(arm.body[-1], (Return, Break, Continue)) else []
+                arm.body = instrument(arm.body[:len(arm.body) - len(keep)], scope, tags) + keep
+            s.els = instrument(s.els, scope, tags)
         elif isinstance(s, tast.RecoverRun):
             # Only up to the block's own jump: nothing may follow it.
             s.body = instrument(s.body[:-1], scope, tags) + s.body[-1:]

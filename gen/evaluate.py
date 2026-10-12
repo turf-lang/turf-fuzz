@@ -28,7 +28,7 @@ from tast import (INT_MIN, INT_MAX, StructT, ArrT, SliceT, ListT, Lit, BLit,
                   RecoverP, ErrIs, ErrMsg, Defer, RecoverRun, EnumT, EnumLit,
                   EnumOf, EnumTo, EnumCount, Compare, DLit, CLit, Conv, CollT,
                   CollNew, CMeth, CIndex, TryGet, CStmt, GCall, GGet, GPut,
-                  RefT, Null, Heap, AddrOf, RefCast, IsNull)
+                  RefT, Null, Heap, AddrOf, RefCast, IsNull, ErrCompare)
 import math
 
 import sys
@@ -115,10 +115,13 @@ class EnumV:
 
 
 class ErrV:
-    """A failed !T: which variant, and its message ("" when none)."""
+    """A failed !T: which variant of which error type, its message ("" when
+    none) and its payload fields, stored as a location of each field's type
+    would store them: a struct is a copy, a List or a reference is shared
+    with whoever else holds it."""
 
-    def __init__(self, variant, msg):
-        self.variant, self.msg = variant, msg
+    def __init__(self, etype, variant, msg, fields=()):
+        self.etype, self.variant, self.msg, self.fields = etype, variant, msg, list(fields)
 
 
 class RefV:
@@ -430,7 +433,10 @@ class _Machine:
         if isinstance(e, EnumCount):
             return len(e.enum.variants)
         if isinstance(e, ErrLit):
-            return ErrV(e.variant, "" if e.msg is None else self.ev(e.msg, env))
+            # Payload arguments left to right, then the message.
+            fields = [store(self.ev(a, env), t) for a, t in zip(e.args, e.ftypes)]
+            return ErrV(e.etype, e.variant, "" if e.msg is None else self.ev(e.msg, env),
+                        fields)
         if isinstance(e, Try):
             v = self.ev(e.call, env)
             if isinstance(v, ErrV):
@@ -440,7 +446,8 @@ class _Machine:
             v = self.ev(e.call, env)
             return self.ev(e.fallback, env) if isinstance(v, ErrV) else v
         if isinstance(e, ErrIs):
-            return env[e.err].variant == e.variant
+            # Which variant it is, never its payload or message.
+            return env[e.err].etype == e.etype and env[e.err].variant == e.variant
         if isinstance(e, ErrMsg):
             return env[e.err].msg
         if isinstance(e, Null):
@@ -794,6 +801,23 @@ class _Machine:
                     return
             if s.els is not None:
                 self.block(s.els, env)
+        elif isinstance(s, ErrCompare):
+            v = env[s.err]
+            for arm in s.arms:
+                if v.etype != arm.etype or v.variant != arm.variant:
+                    continue
+                if any(p[0] == "lit" and v.fields[i] != p[1].v
+                       for i, p in enumerate(arm.pats)):
+                    continue
+                for i, p in enumerate(arm.pats):
+                    if p[0] == "bind":
+                        env[p[1]] = store(v.fields[i], p[2])
+                self.line = arm.line
+                if arm.guard is not None and not self.ev(arm.guard, env):
+                    continue  # a failed guard falls through to the next arm
+                self.block(arm.body, env)
+                return
+            self.block(s.els, env)
         elif isinstance(s, RecoverRun):
             v = self.ev(s.call, env)
             if isinstance(v, ErrV):
