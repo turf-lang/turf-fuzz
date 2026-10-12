@@ -82,7 +82,7 @@ agree.
 | `substring(s, a, b)` is bytes `a..b`; `a < 0`, `b < a` or `b > length` panics `prog.tr:<line>: strings.substring: index out of bounds` with the caller's line (F-API-3). The generator guards it, except for a few deliberate raw ranges. | `strings.tr`; probe (s3.tr) |
 | `io::printline(string)` prints the bytes and `\n`. | doc `io_and_net.md` |
 | The evaluator gives up on a program (regenerates it) once a string passes 4096 bytes, since `s = s + s` in nested loops grows without bound. | scope |
-| **Never generated: `mut a: string[N];`** (or any zero-filled declaration holding a string). An element read before it is written is a null pointer, not `""`, and `a[1].length()` segfaults. Same family as the array-element `&U` hole, an open turflang issue (owner, 2026-10-12: separate from LEC-009). | probe (z1.tr) |
+| `mut a: string[N];` (or any zero-filled array whose element holds a string): an element read before it is written is `""`. An array whose element carries a non-null `&U` (`H[2]`, `H { own: &U }`) needs an initializer, E128. The generator does not emit either yet. | FREEZE §6.28 F-REFARR-2 (amended 2026-10-13); owner decision 2026-10-12, turflang 12cde3f (before: a null pointer, `a[1].length()` segfaulted; probe z1.tr) |
 
 ## Errors, `defer`, recursion
 

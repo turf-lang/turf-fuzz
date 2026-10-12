@@ -6,9 +6,6 @@ here on the owner's instruction (2026-10-12) so the fuzzing work can move on;
 go through them once the turf-fuzz roadmap is done. Delete a line once it is
 decided, and record the decision where it belongs (FREEZE.md, gen/SEMANTICS.md).
 
-## Still open from earlier items
-
-- **Null strings in zero-filled string arrays, and the array-element `&U`
-  hole.** `mut a: string[2];` then reading an unwritten element is a null
-  string (segfault); `mut a: H[2];` leaves a `&U` field null. Owner said
-  2026-10-12: a separate issue from LEC-009.
+None open. All nine parked on 2026-10-12 were decided that day and landed
+in turflang 48eb1c8..12cde3f (2026-10-13); each decision is recorded in
+FREEZE.md and gen/SEMANTICS.md.
