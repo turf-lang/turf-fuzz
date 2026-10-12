@@ -490,6 +490,8 @@ class Gen:
             opts += ["list"]
             if self.nodes:
                 opts += ["rlist"]
+        if self.use_arrays and self.nodes:
+            opts += ["rarr"]
         if self.use_colls and not self.in_method:
             opts += ["coll", "coll"]
         if self.use_generics and not self.in_method:
@@ -501,6 +503,11 @@ class Gen:
             # References in a collection: the List's buffer is the only thing
             # keeping some nodes alive. A third of the time `&?N`, with nulls.
             return ListT(RefT(self.pick(self.nodes), self.chance(0.3)))
+        if k == "rarr":
+            # An array of references, `(&N)[k]` (turflang a7a881a, FREEZE
+            # §6.28): copied by value, the nodes shared. `(&?N)[k]` may be
+            # declared bare (all null); `(&N)[k]` never is (E128).
+            return ArrT(RefT(self.pick(self.nodes), self.chance(0.4)), self.rng.randint(1, 3))
         if k == "gstruct":
             return self.ginst(self.scalar_type())
         if k == "coll":

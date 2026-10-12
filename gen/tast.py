@@ -161,16 +161,21 @@ def ty_str(t):
     if isinstance(t, RefT):
         return ("&?" if t.nullable else "&") + t.st.name
     if isinstance(t, ArrT):
-        # int[2][3] is 2 rows of 3: the outer size is written first.
+        # int[2][3] is 2 rows of 3: the outer size is written first. An array
+        # of references parenthesises the element, `(&N)[2]`: a bare `&N[2]`
+        # is a reference to an array (turflang FREEZE §6.28, F-REFARR-1).
         dims = []
         while isinstance(t, ArrT):
             dims.append(t.n)
             t = t.elem
-        return ty_str(t) + "".join("[%d]" % d for d in dims)
+        base = "(%s)" % ty_str(t) if isinstance(t, RefT) else ty_str(t)
+        return base + "".join("[%d]" % d for d in dims)
     if isinstance(t, SliceT):
         # The unsized dimension is the outer one: rows of int[3] are int[][3].
+        if isinstance(t.elem, RefT):
+            return "(%s)[]" % ty_str(t.elem)
         inner = ty_str(t.elem)
-        cut = inner.find("[")
+        cut = inner.find("[", inner.find(")") + 1 if inner.startswith("(") else 0)
         return inner + "[]" if cut < 0 else inner[:cut] + "[]" + inner[cut:]
     if isinstance(t, ListT):
         return "List<%s>" % ty_str(t.elem)

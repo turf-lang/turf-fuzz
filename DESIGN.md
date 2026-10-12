@@ -109,7 +109,8 @@ structs with methods, `T[N]` (also 2-D), `T[]` write-through parameters,
 `strings::` functions, errors with payloads, `recover produce` / `recover run`
 / `recover as err run`, `try`, `defer`, enums and `compare`, `fn<T>` helpers
 and a generic struct, and reference graphs (`&S`/`&?S`, `heap()`, null checks,
-walks, rings, references in fields and Lists).
+walks, rings, references in fields, Lists and arrays of references
+`(&S)[k]`/`(&?S)[k]`).
 
     python3 gen/generate.py SEED -o prog.tr --expected expected.txt
     python3 gen/trace.py SEED      # first statement where compiled and evaluated traces diverge
@@ -312,6 +313,7 @@ the turflang commit has the details).
 | b48c297 | every diagnostic leaked its temporaries and the abandoned frames' locals (recovery is an exception now, not `longjmp`); a function that failed to parse made each call of it E041 | libFuzzer; generator |
 | 02759f8 | a `&?T` dereference inside a `recover` block was never checked (E081) | known bug, re-found |
 | a7a881a | no way to write an array of references, and `&(N[2])`/`(&N)[2]` both printed `&N[2]`; now `(&N)[k]` (owner decision, FREEZE §6.28) | probing |
+| c89f429 | an array literal of references with `null` (`[r, null]`) was E004, and `a = [r1, r2]` into a `(&?N)[2]` E066, though a declaration took both | generator (seed 7180) |
 | 8e16021 | F-MEM-5's eight documented residuals (struct copies, `heap(m)`, Lists of structs, two hops, by-value parameter fields, `&a[i]`, `return id(&n)`) compiled and dangled; per-field tracking (owner decision). Also a `continue` inside a `recover` block in a loop was E007 since 02759f8 | soundness oracle; differential (seed 424234) |
 
 ## 10. Open work
@@ -323,8 +325,7 @@ parameter, over arrays or Lists of `T`, or at `T` = struct, `int32`, `char`;
 `compare` on strings, `_`, destructuring and guards; `printline(char)`;
 `StringBuilder`, `split`/`join`, `pad_*`, `parse_int`, `for c in s`,
 `s[i] = c`; references in `Stack`/`Queue`/`Set`/`Map` or as generic
-arguments, and arrays of references (`(&N)[k]`, since turflang a7a881a;
-the soundness oracle uses them, the generator not yet); inlining a helper into its
+arguments; `(&S)[]` slice parameters; inlining a helper into its
 caller in the reducer. The generator never emits a read of a never-written
 `string` or `&U` array element (an open owner question).
 
