@@ -110,6 +110,8 @@ def main():
     ap.add_argument("--findings", default=os.path.join(ROOT, "findings"))
     ap.add_argument("--quick", action="store_true", help="-O0 only (generator debugging)")
     ap.add_argument("--allow-undefined", action="store_true")
+    ap.add_argument("--no-asan", action="store_true",
+                    help="skip the ASan-runtime configurations even if build_asan/turfc exists")
     a = ap.parse_args()
 
     jobs = max(1, min(a.jobs, MAX_JOBS))
@@ -123,6 +125,10 @@ def main():
     rec = Recorder(a.cap, a.findings)
     print("compiler: %s  lock=%s tree=%s" % (D.TURFC, rec.lock_commit[:10], rec.tree_head[:10]))
     print("%s" % rec.version)
+    asan = False if (a.no_asan or a.quick) else D.asan_available()
+    print("asan runtime: %s" % (D.TURFC_ASAN if asan else
+                                "off" if (a.no_asan or a.quick) else
+                                "not built (%s missing): those configurations are skipped" % D.TURFC_ASAN))
 
     counts = Counter()
     outcomes = Counter()
@@ -134,7 +140,7 @@ def main():
     def task(seed):
         wd = os.path.join(run_root, str(seed))
         try:
-            v = D.check_seed(seed, wd, a.allow_undefined, a.quick)
+            v = D.check_seed(seed, wd, a.allow_undefined, a.quick, asan)
         except Exception as e:  # a generator/oracle bug, never a compiler finding
             shutil.rmtree(wd, ignore_errors=True)
             return seed, None, "HARNESS ERROR %s: %s" % (type(e).__name__, e)

@@ -232,6 +232,8 @@ come from a small domain (`e % 4..16`, short literals) so lookups hit.
 | `TURF_GC_STRESS=1` | collect on every allocation | `AGENTS.md` (turflang) |
 | `TURF_GC_VALIDATE=1` | independent mark phase, panics `GC root missed`, prints `TURF_GC_VALIDATE:` lines on stderr | `AGENTS.md`; `src/TestRunner.cpp` |
 
+| `TURFC_ASAN` (oracle) | the compiler of a tree configured `-DTURF_RT_SANITIZE=ON` (default `$TURF_ROOT/build_asan/turfc`): every program it compiles links `libturfrt_asan`, the runtime and collector under ASan + UBSan. Run with `ASAN_OPTIONS=detect_leaks=0`, plain and under `TURF_GC_STRESS=1`, at `-O0` and `-O2`. The program's own code is not instrumented: a report means the runtime touched freed or foreign memory (a live block collected, then scanned, copied or printed). | `AGENTS.md` ("An ASan runtime"), `CMakeLists.txt` `TURF_RT_SANITIZE`; verified with a planted double free |
+
 Both are runtime variables of the compiled program (`runtime/turfrt_gc.c`),
 so the oracle sets them when it runs the `-O0` binary. `List` growth and
 `.copy()` allocate on the GC heap, with Lists, views and arrays of structs

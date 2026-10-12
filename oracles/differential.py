@@ -7,7 +7,14 @@ and both (these are runtime environment variables of the program, not compile
 flags; see AGENTS.md in the compiler tree). Compare stdout and outcome across
 all configurations (F-OPT-1 / INV-OPT-1) and against the reference evaluator.
 
+When `$TURF_ROOT/build_asan/turfc` exists (a tree configured with
+-DTURF_RT_SANITIZE=ON; override with TURFC_ASAN), each program is also
+compiled by it at -O0 and -O2 and run plain and under TURF_GC_STRESS=1: the
+same program against the runtime and collector built with ASan + UBSan.
+
 Failure classes
+  sanitizer        the ASan/UBSan runtime reported (a use-after-free in the
+                   collector or an allocation the runtime overran)
   crash            the compiler crashed, or a binary died on a signal other
                    than a Turf panic's abort, hung, or TURF_GC_VALIDATE reported
   rejected-valid   the compiler refused a program the generator considers valid
@@ -38,14 +45,35 @@ import generate  # noqa: E402
 TURF_ROOT = os.environ.get("TURF_ROOT") or os.path.join(os.path.dirname(ROOT), "turflang")
 TURFC = os.environ.get("TURFC") or os.path.join(TURF_ROOT, "build", "turfc")
 
-COMPILE_CONFIGS = [("O0", ["-O0"]), ("O1", ["-O1"]), ("O2", ["-O2"]),
-                   ("O3", ["-O3"]), ("Os", ["-Os"]), ("g", ["-g"])]
+# A second compiler, built with -DTURF_RT_SANITIZE=ON in build_asan/: the same
+# front end, but every program it compiles links libturfrt_asan (the runtime,
+# collector included, under ASan + UBSan). The program's own code is not
+# instrumented; what this catches is the runtime touching memory it freed or
+# never owned (a block collected while reachable and then scanned, copied,
+# strlen'd or printed), which a plain build survives by luck. Skipped when the
+# binary is absent (see AGENTS.md in the compiler tree for building it).
+TURFC_ASAN = os.environ.get("TURFC_ASAN") or os.path.join(TURF_ROOT, "build_asan", "turfc")
+ASAN_ENV = {"ASAN_OPTIONS": "detect_leaks=0:abort_on_error=0", "UBSAN_OPTIONS": "print_stacktrace=0"}
+
+# (name, compiler, flags)
+COMPILE_CONFIGS = [("O0", TURFC, ["-O0"]), ("O1", TURFC, ["-O1"]), ("O2", TURFC, ["-O2"]),
+                   ("O3", TURFC, ["-O3"]), ("Os", TURFC, ["-Os"]), ("g", TURFC, ["-g"])]
 # (name, binary built by, extra environment)
-RUN_CONFIGS = [(n, n, {}) for n, _ in COMPILE_CONFIGS] + [
+RUN_CONFIGS = [(n, n, {}) for n, _, _ in COMPILE_CONFIGS] + [
     ("O0+gcstress", "O0", {"TURF_GC_STRESS": "1"}),
     ("O0+gcvalidate", "O0", {"TURF_GC_VALIDATE": "1"}),
     ("O0+gcstress+gcvalidate", "O0", {"TURF_GC_STRESS": "1", "TURF_GC_VALIDATE": "1"}),
 ]
+ASAN_COMPILE_CONFIGS = [("asanO0", TURFC_ASAN, ["-O0"]), ("asanO2", TURFC_ASAN, ["-O2"])]
+ASAN_RUN_CONFIGS = [
+    ("asanO0", "asanO0", ASAN_ENV),
+    ("asanO0+gcstress", "asanO0", dict(ASAN_ENV, TURF_GC_STRESS="1")),
+    ("asanO2+gcstress", "asanO2", dict(ASAN_ENV, TURF_GC_STRESS="1")),
+]
+
+
+def asan_available():
+    return os.path.exists(TURFC_ASAN)
 
 COMPILE_TIMEOUT = 120
 RUN_TIMEOUT = 10
@@ -59,6 +87,9 @@ COMPILER_CRASH_RE = re.compile(
     r"Internal compiler error|LLVM ERROR|Assertion .* failed|AddressSanitizer|"
     r"Stack dump|PLEASE submit a bug report|UndefinedBehaviorSanitizer|"
     r"terminate called|Segmentation fault", re.I)
+SANITIZER_RE = re.compile(
+    r"(ERROR: AddressSanitizer: [^\n]*|SUMMARY: (?:Address|UndefinedBehavior)Sanitizer: [^\n]*"
+    r"|[^\n]*: runtime error: [^\n]*)")
 ERROR_CODE_RE = re.compile(r"\[(E\d{3})")
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -101,8 +132,12 @@ class Outcome:
         self.rc, self.stdout, self.stderr, self.timed_out = rc, stdout, stderr, timed_out
         self.gc_validate = [l for l in stderr.splitlines() if l.startswith("TURF_GC_VALIDATE:")]
         m = PANIC_RE.search(stderr)
+        san = SANITIZER_RE.search(stderr)
         if timed_out:
             self.kind, self.detail = "timeout", ()
+        elif san:
+            # Whatever the exit status: a sanitizer report is the outcome.
+            self.kind, self.detail = "sanitizer", (san.group(1).strip(),)
         elif rc is not None and rc >= 0:
             self.kind, self.detail = "exit", (rc,)
         elif rc == -signal.SIGABRT and m:
@@ -123,6 +158,8 @@ class Outcome:
             what = "trap %s line %d" % self.detail
         elif self.kind == "signal":
             what = "signal %d (%s)" % (self.detail[0], _signame(self.detail[0]))
+        elif self.kind == "sanitizer":
+            what = "sanitizer: %s" % self.detail[0][:120]
         else:
             what = "timeout"
         return "%s, stdout %d bytes" % (what, len(self.stdout))
@@ -172,8 +209,10 @@ def _compile_diag(output):
     return (codes[0] if codes else "?"), msg
 
 
-def check_source(seed, source_path, workdir, expected, quick=False):
-    """Run all configurations on source_path (copied to workdir/prog.tr)."""
+def check_source(seed, source_path, workdir, expected, quick=False, asan=True):
+    """Run all configurations on source_path (copied to workdir/prog.tr).
+    asan adds the ASan-runtime configurations when that compiler exists; with
+    quick it is the -O0 binary plus those (the GC/ownership view of a seed)."""
     v = Verdict(seed)
     v.expected = expected
     v.expected_text = generate.format_expected(expected)
@@ -184,9 +223,12 @@ def check_source(seed, source_path, workdir, expected, quick=False):
     binaries = {}
     compile_configs = COMPILE_CONFIGS[:1] if quick else COMPILE_CONFIGS
     run_configs = RUN_CONFIGS[:1] if quick else RUN_CONFIGS
-    for name, flags in compile_configs:
+    if asan and asan_available():
+        compile_configs = compile_configs + ASAN_COMPILE_CONFIGS
+        run_configs = run_configs + ASAN_RUN_CONFIGS
+    for name, compiler, flags in compile_configs:
         out = "bin_" + name
-        rc, so, se, to = _run([TURFC, "prog.tr", "-o", out] + flags, workdir, timeout=COMPILE_TIMEOUT)
+        rc, so, se, to = _run([compiler, "prog.tr", "-o", out] + flags, workdir, timeout=COMPILE_TIMEOUT)
         text = so + se
         v.compile[name] = (rc, text if rc != 0 or to else "")
         if to:
@@ -210,8 +252,19 @@ def check_source(seed, source_path, workdir, expected, quick=False):
     for name, built, extra in run_configs:
         env = dict(os.environ)
         env.update(extra)
-        rc, so, se, to = _run([binaries[built]], workdir, env=env, timeout=RUN_TIMEOUT)
+        # ASan plus a collection per allocation is slow: three times the budget.
+        limit = RUN_TIMEOUT * 3 if built.startswith("asan") else RUN_TIMEOUT
+        rc, so, se, to = _run([binaries[built]], workdir, env=env, timeout=limit)
         v.runs[name] = Outcome(rc, so, se, to)
+
+    # 0. a sanitizer report from the runtime, in any configuration
+    san = [(n, o) for n, o in v.runs.items() if o.kind == "sanitizer"]
+    if san:
+        n, o = san[0]
+        v.cls = "sanitizer"
+        v.sig = "sanitizer " + re.sub(r"0x[0-9a-f]+|\d+", "N", o.detail[0])
+        v.summary = "%s: %s" % (",".join(x for x, _ in san), o.detail[0][:200])
+        return v
 
     # 1. configurations disagree (a crash in some of them is still a miscompile)
     keys = {n: o.key() for n, o in v.runs.items()}
@@ -264,7 +317,9 @@ def sig_hash(cls, sig):
     return hashlib.sha1((cls + "\n" + sig).encode()).hexdigest()[:10]
 
 
-def check_seed(seed, workdir, allow_undefined=False, quick=False):
+def check_seed(seed, workdir, allow_undefined=False, quick=False, asan=None):
+    if asan is None:
+        asan = not quick  # --quick stays the one-binary generator check
     workdir = os.path.abspath(workdir)
     os.makedirs(workdir, exist_ok=True)
     prog, res, attempt = generate.generate(seed, allow_undefined)
@@ -276,7 +331,7 @@ def check_seed(seed, workdir, allow_undefined=False, quick=False):
             kind, code, trap, line, stdout = "exit", 0, "", 0, ""
             def describe(self): return "undefined"
         res = _Any()
-    v = check_source(seed, path, workdir, res, quick)
+    v = check_source(seed, path, workdir, res, quick, asan)
     v.attempt = attempt
     return v
 
@@ -287,10 +342,14 @@ def main():
     ap.add_argument("--keep", help="work in (and keep) this directory")
     ap.add_argument("--allow-undefined", action="store_true")
     ap.add_argument("--quick", action="store_true", help="-O0 only (generator debugging)")
+    ap.add_argument("--asan", action="store_true",
+                    help="with --quick: also the ASan-runtime configurations")
+    ap.add_argument("--no-asan", action="store_true", help="never the ASan-runtime configurations")
     a = ap.parse_args()
     wd = a.keep or tempfile.mkdtemp(prefix="tfz_", dir=os.path.join(ROOT, "work")
                                     if os.path.isdir(os.path.join(ROOT, "work")) else None)
-    v = check_seed(a.seed, wd, a.allow_undefined, a.quick)
+    asan = False if a.no_asan else True if a.asan else None
+    v = check_seed(a.seed, wd, a.allow_undefined, a.quick, asan)
     print("seed %d: %s" % (a.seed, v.cls or "ok"))
     if v.cls:
         print("  " + v.summary)
