@@ -1,10 +1,10 @@
-# PARTLY FIXED: every diagnostic raised through the query facade leaked its error object
+# FIXED: every diagnostic raised through the query facade leaked
 
-- class: leak (LeakSanitizer, `fuzz_analyze` with ASan); the error object itself fixed in turflang e1dcd7a, the rest open
+- class: leak (LeakSanitizer, `fuzz_analyze` with ASan)
 - found: the first libFuzzer run with leak detection on (item 5), compiler 2f49c7e. Any input with a compile error reproduces it; `min.tr` is turflang's own `tests/03_typechecker` E061 test
-- size: about 170 bytes in 3 allocations per raised error (the error's message and hint strings)
-- cause: `TurfError::raise()` (include/Errors.h) longjmps to the recovery point when one is active, as it always is under `turf::analyze()`. The jump skips the destructor of the temporary error object being raised (`InvalidAssignmentTargetError(...).raise()`, every `reportError` path the same), so its `std::string` members are never freed. The comment there already notes that longjmp skips destructors (for the parser's recursion guard), but not this.
-- why it matters: turf-lsp runs the facade on every keystroke for hours; each diagnostic leaks. The batch compiler exits after one compile, so it is harmless there.
-- fuzzing: `engine/run.sh` runs with `-detect_leaks=0` and `ASAN_OPTIONS=detect_leaks=0` (as `tier0` always has); otherwise the first invalid input ends the run.
-- fixed (turflang e1dcd7a): `raise()` destroys the error object just before the jump, so its message, hint and related locations are freed. On `min.tr` the leak goes from 170 bytes in 3 allocations to 18 in 1. All 1169 engine seeds replay clean under ASan.
-- still open: the jump also skips temporaries of the raising full-expression (`describeNonLValue(...)`, any message built with `+`) and locals of every frame between the raise and the `setjmp`. Removing those needs the recovery path to unwind: a C++ exception caught at the ~30 `setjmp(g_recoverJmp)` sites instead of `longjmp`. An engineering change to the error path, outside the fuzzing roadmap.
+- size: about 170 bytes in 3 allocations per raised error at first, 18 bytes in 1 after the first fix
+- cause: `TurfError::raise()` (include/Errors.h) longjmped to the recovery point, as it always does under `turf::analyze()`. The jump skipped every destructor between the raise and the `setjmp`: the error object, the temporaries that built its message, and the locals of every abandoned frame.
+- why it matters: turf-lsp runs the facade on every keystroke for hours; each diagnostic leaked. The batch compiler exits after one compile, so it was harmless there.
+- partial fix (turflang e1dcd7a): `raise()` destroyed the error object by hand before the jump. 170 bytes to 18 on `min.tr`.
+- fixed (turflang b48c297, 2026-10-12): recovery is a C++ exception (`RecoverUnwind`, include/Lexer.h) caught at each former `setjmp` site, so a recovered error unwinds. `min.tr`: no leak. All 640 of turflang's `fail_*` tests outside the nesting-limit (E111) ones replay through `fuzz_analyze` with `detect_leaks=1`: no leak. The E111 tests still lose the over-deep tree on purpose (`AppendFlattenedTopLevelDecl()` releases it: freeing it would recurse as deep as the passes it protects against).
+- fuzzing: `engine/run.sh` and `ci/engine.sh` still pass `-detect_leaks=0`; they can drop it once the E111 release has a suppression or an iterative destructor.

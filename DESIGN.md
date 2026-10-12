@@ -266,8 +266,10 @@ to turflang.
   tier 0 raises it (`--stack-mb`), the CI scripts set `ulimit -s 65536`.
 - Codegen's private `getExprType()` cannot type every expression kind; a new
   crash with a null type is likely that.
-- The engine runs with `detect_leaks=0`: every diagnostic leaks its
-  temporaries through the recovery `longjmp` (`findings/leak/diagnostic-longjmp`).
+- The engine runs with `detect_leaks=0`. Diagnostics no longer leak (turflang
+  b48c297), but an over-deep tree (E111) is released on purpose, so leak
+  detection would stop at the first such input
+  (`findings/leak/diagnostic-longjmp`).
 
 ## 9. What it has found
 
@@ -305,6 +307,8 @@ the turflang commit has the details).
 | 2f49c7e | a deferred `&?T` read after the block reassigns it | reducer |
 | e1dcd7a | every diagnostic's error object leaked under the facade | libFuzzer |
 | 900f330 | `x.a.a...a` on a non-struct: exponential compile time, then an ICE (now E068) | first local CI dry run |
+| b48c297 | every diagnostic leaked its temporaries and the abandoned frames' locals (recovery is an exception now, not `longjmp`); a function that failed to parse made each call of it E041 | libFuzzer; generator |
+| 02759f8 | a `&?T` dereference inside a `recover` block was never checked (E081) | known bug, re-found |
 
 ## 10. Open work
 
@@ -325,11 +329,9 @@ by whole-program seeds; smaller seeds or a no-flow-analysis mode would raise
 it.
 
 **Open findings.** `findings/unsound/escape-boundary`,
-`findings/unsound/int-to-reference-cast` and the questions in
-`OPEN_QUESTIONS.md`; `findings/leak/diagnostic-longjmp` (temporaries skipped
-by the `longjmp`). One syntax error in a function body (`defer { }`) also
-reports "Unknown function" at every call of that function (a diagnostic
-cascade; no findings directory, found while building item 2).
+`findings/unsound/int-to-reference-cast`,
+`findings/wrong-message/array-of-references-type-name` and the questions in
+`OPEN_QUESTIONS.md`.
 
 **CI.** Not yet run on GitHub: both repos must be pushed, the locked commit
 included. The `fuzz-finding` label does not exist yet.
