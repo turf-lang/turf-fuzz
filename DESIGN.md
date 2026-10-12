@@ -157,8 +157,10 @@ oracle checks the compiler's static side:
 
     python3 oracles/soundness.py --jobs 8 [--gaps] [--only SUBSTR] [--keep]
 
-It generates 1166 small programs at the F-MEM-5 escape boundary (a reference
-reaching a struct sink), each with a pinned verdict: from this frame's
+It generates 2662 small programs at the F-MEM-5 escape boundary (a reference
+reaching a sink: a return, a long-lived field or array element, a collection,
+`heap()`, directly or inside a struct or array value), each with a pinned
+verdict: from this frame's
 storage, rejected with E086 and the sink's wording; from a safe source,
 accepted and printing exactly `42` at -O0, -O2 and under the ASan runtime with
 a collection on every allocation. A `clobber()` call between the escape and
@@ -309,6 +311,8 @@ the turflang commit has the details).
 | 900f330 | `x.a.a...a` on a non-struct: exponential compile time, then an ICE (now E068) | first local CI dry run |
 | b48c297 | every diagnostic leaked its temporaries and the abandoned frames' locals (recovery is an exception now, not `longjmp`); a function that failed to parse made each call of it E041 | libFuzzer; generator |
 | 02759f8 | a `&?T` dereference inside a `recover` block was never checked (E081) | known bug, re-found |
+| a7a881a | no way to write an array of references, and `&(N[2])`/`(&N)[2]` both printed `&N[2]`; now `(&N)[k]` (owner decision, FREEZE §6.28) | probing |
+| 8e16021 | F-MEM-5's eight documented residuals (struct copies, `heap(m)`, Lists of structs, two hops, by-value parameter fields, `&a[i]`, `return id(&n)`) compiled and dangled; per-field tracking (owner decision). Also a `continue` inside a `recover` block in a loop was E007 since 02759f8 | soundness oracle; differential (seed 424234) |
 
 ## 10. Open work
 
@@ -319,7 +323,8 @@ parameter, over arrays or Lists of `T`, or at `T` = struct, `int32`, `char`;
 `compare` on strings, `_`, destructuring and guards; `printline(char)`;
 `StringBuilder`, `split`/`join`, `pad_*`, `parse_int`, `for c in s`,
 `s[i] = c`; references in `Stack`/`Queue`/`Set`/`Map` or as generic
-arguments (arrays of references have no spelling); inlining a helper into its
+arguments, and arrays of references (`(&N)[k]`, since turflang a7a881a;
+the soundness oracle uses them, the generator not yet); inlining a helper into its
 caller in the reducer. The generator never emits a read of a never-written
 `string` or `&U` array element (an open owner question).
 
@@ -328,9 +333,8 @@ before generics, not investigated. The engine is limited to about 7 exec/s
 by whole-program seeds; smaller seeds or a no-flow-analysis mode would raise
 it.
 
-**Open findings.** `findings/unsound/escape-boundary`,
-`findings/unsound/int-to-reference-cast`,
-`findings/wrong-message/array-of-references-type-name` and the questions in
+**Open findings.** `findings/unsound/escape-boundary` (its four owner
+questions), `findings/unsound/int-to-reference-cast` and the rest of
 `OPEN_QUESTIONS.md`.
 
 **CI.** Not yet run on GitHub: both repos must be pushed, the locked commit

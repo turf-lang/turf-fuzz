@@ -1,4 +1,4 @@
-# The F-MEM-5 escape boundary: two holes fixed, several open
+# The F-MEM-5 escape boundary: ten holes fixed, four owner questions open
 
 - class: accepted-but-unsound (a reference into a dead frame read back: garbage at -O0 after the next call clobbers the frame, often 0 at -O2)
 - found: probing for the soundness oracle (turf-fuzz item 3, slice 4), compiler bfa72ba
@@ -16,6 +16,6 @@
 - **A field store whose base is a call result** (`k3_call_result_field.tr`: `mut h: &N = mk(); h.next = &n; return h;`) and **through a List element** (`k4_list_elem_field.tr`: `l[0].next = &n`): the base is Unknown, which is never flagged. Not listed among the documented gaps, but follows from the same "Unknown is permissive" rule.
 - **defer false positive** (`k1_return_defer_assigned.tr`): `p = heap(n); defer p = &n; return p;` is rejected, though the return value is computed before the defer runs. A defer is analysed where it is written. Skipping it is unsound inside a loop (the next iteration sees `p = &n`), so the fix needs defers modelled at block exit.
 
-## Open: documented residual gaps (FDN-002 Known pitfalls, INV-MEM-6), reproduced
+## Fixed 2026-10-12: the documented residual gaps (FDN-002 Known pitfalls, INV-MEM-6)
 
-`k1_return_struct_copy.tr` (by-value struct copy), `k1_return_via_call.tr` (intermediate call), `k1_return_arr_elem.tr` (`&arr[i]`), `k2_param_two_hops.tr` (`h.own.next = &n`), `k2_struct_param_byval.tr`, `k4_list_of_struct.tr` (a struct holding `&n` pushed), `k5_heap_struct_with_ref.tr` / `k5_heap_node_with_ref.tr` (`heap(m)` where `m.next = &n`).
+Owner decision: reopen FDN-002's per-field Non-goal, keeping "never a false positive". turflang 8e16021 (EscapePass keyed by place; `ReturnsParam` call summary) makes all eight E086: `k1_return_struct_copy.tr` (by-value struct copy), `k1_return_via_call.tr` (intermediate call), `k1_return_arr_elem.tr` (`&arr[i]`), `k2_param_two_hops.tr` (`h.own.next = &n`), `k2_struct_param_byval.tr`, `k4_list_of_struct.tr` (a struct holding `&n` pushed), `k5_heap_struct_with_ref.tr` / `k5_heap_node_with_ref.tr` (`heap(m)` where `m.next = &n`). Pinned in turflang `tests/39_nullable_references/fail_escape_*` (struct, heap, push, call, array element, two hops, by-value parameter, array of references) with `escape_struct_fields_kept_local_ok.tr` for the safe shapes; the soundness oracle generates them as sources and sinks (2662 cases). The open questions above are unchanged.

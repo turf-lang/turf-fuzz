@@ -53,6 +53,14 @@ import queue::Queue;
 
 struct N { val: int, next: &?N }
 
+struct H { k: int, head: &?N }
+
+struct H2 { k: int, own: &N }
+
+fn id(p: &N): &N {
+    return p;
+}
+
 fn clobber(d: int): int {
     mut buf: int[64];
     buf[0] = 0;
@@ -84,6 +92,12 @@ SOURCES = {
     "nheapvar":  (True, True, ["mut q: &?N = heap(n);"], "q"),
     "giveheap":  (True, False, [], "(n.val > 0 give heap(n) otherwise heap(n2))"),
     "given":     (True, False, [], "given"),  # a `&N` parameter from main
+    # Since turflang's per-field escape tracking (2026-10-12): a call that
+    # returns its reference argument unchanged, and an element of a local
+    # array.
+    "via_call":  (False, False, [], "id(&n)"),
+    "arr_elem":  (False, False, ["mut a: N[2] = [n, n2];"], "&a[0]"),
+    "via_call_heap": (True, False, [], "id(heap(n))"),
 }
 
 # ------------------------------------------------------------------- sinks
@@ -143,6 +157,50 @@ SINKS = {
                                call="esc(l{a});",
                                read="mut r: &?N = l[0]; if (r != null) { io::printline(r.val); }",
                                msg="can't be pushed into a collection"),
+    # A reference carried inside a struct or array value (turflang's
+    # per-field escape tracking, 2026-10-12). `returns` marks a statement that
+    # ends in a return, so straight-line code gets no fallback after it.
+    "struct_return": dict(ret="H", pre=["mut h: H = H::default();"],
+                          stmt="h.head = {v}; return h;", returns=True,
+                          tail="return H::default();", takes="nref", setup="",
+                          call="mut hh: H = esc({a});",
+                          read="mut r: &?N = hh.head; if (r != null) { io::printline(r.val); }",
+                          msg="can't be returned"),
+    "struct_copy_return": dict(ret="H", pre=["mut h: H = H::default();"],
+                               stmt="h.head = {v}; mut g: H = h; return g;", returns=True,
+                               tail="return H::default();", takes="nref", setup="",
+                               call="mut hh: H = esc({a});",
+                               read="mut r: &?N = hh.head; if (r != null) { io::printline(r.val); }",
+                               msg="can't be returned"),
+    "struct_heap": dict(ret="&N", pre=["mut m: N = N::default();"],
+                        stmt="m.next = {v}; return heap(m);", returns=True,
+                        tail="return heap(N::default());", takes="nref", setup="",
+                        call="mut dst: &N = esc({a});",
+                        read="mut r: &?N = dst.next; if (r != null) { io::printline(r.val); }",
+                        msg="can't be boxed with heap()"),
+    "struct_push": dict(params=["l: List<H>"], ret="void", pre=["mut h: H = H::default();"],
+                        stmt="h.head = {v}; l.push(h);", tail="", takes="nref",
+                        setup="mut l: List<H> = List::default();", call="esc(l{a});",
+                        read="mut r: &?N = l[0].head; if (r != null) { io::printline(r.val); }",
+                        msg="can't be pushed into a collection"),
+    "array_return": dict(ret="(&N)[1]", stmt="return [{v}];",
+                         tail="return [heap(N::default())];", takes="ref", setup="",
+                         call="mut arr: (&N)[1] = esc({a});",
+                         read="io::printline(arr[0].val);", msg="can't be returned"),
+    "two_hops": dict(params=["h: &H2"], ret="void", stmt="h.own.next = {v};", tail="",
+                     takes="nref", setup="mut h: &H2 = heap(H2::default());",
+                     call="esc(h{a});",
+                     read="mut r: &?N = h.own.next; if (r != null) { io::printline(r.val); }",
+                     msg="can't be stored into a field"),
+    "byval_field": dict(params=["h: H2"], ret="void", stmt="h.own.next = {v};", tail="",
+                        takes="nref", setup="mut h: H2 = H2::default();",
+                        call="esc(h{a});",
+                        read="mut r: &?N = h.own.next; if (r != null) { io::printline(r.val); }",
+                        msg="can't be stored into a field"),
+    "slice_elem": dict(params=["xs: (&N)[]"], ret="void", stmt="xs[0] = {v};", tail="",
+                       takes="ref", setup="mut xs: (&N)[1] = [heap(N::default())];",
+                       call="esc(xs{a});", read="io::printline(xs[0].val);",
+                       msg="can't be stored into an array"),
 }
 
 # ---------------------------------------------------------------- wrappers
@@ -172,8 +230,8 @@ NESTED = {"in_while", "in_for", "in_if", "in_else", "in_block", "in_compare", "n
 # ------------------------------------------------------- known open shapes
 # (name, what it is, escaping function + main body). The value read should be
 # 42; a dangling reference reads something else. None is a finding here:
-# each is a documented FDN-002 residual or an open owner question (see
-# findings/unsound/escape-boundary/report.md).
+# each is an open owner question (see
+# findings/unsound/escape-boundary/report.md and OPEN_QUESTIONS.md).
 GAPS = [
     ("may_merge_cond", "one path Stack, the other Heap (owner: may vs must)",
      "fn esc(c: int): &N {\n    mut n: N = N::default();\n    n.val = 42;\n"
@@ -195,27 +253,9 @@ GAPS = [
      "    mut n: N = N::default();\n    n.val = 42;\n    mut h: &N = mk();\n"
      "    h.next = &n;\n    mut r: &?N = h.next;\n    if (r != null) {\n"
      "        return (r to &N);\n    }\n    return h;\n}\n", "mut r: &N = esc(1);"),
-    ("struct_copy", "documented: inside a by-value struct copy",
-     "struct H { head: &?N }\nfn esc(c: int): &N {\n    mut n: N = N::default();\n"
-     "    n.val = 42;\n    mut h: H = H::default();\n    h.head = &n;\n"
-     "    mut g: H = h;\n    mut r: &?N = g.head;\n    if (r != null) {\n"
-     "        mut s: &N = (r to &N);\n        return heap(N::default());\n    }\n"
-     "    return heap(N::default());\n}\n"
-     "fn esc2(c: int): H {\n    mut n: N = N::default();\n    n.val = 42;\n"
-     "    mut h: H = H::default();\n    h.head = &n;\n    return h;\n}\n",
-     "mut h: H = esc2(1);\n    mut q: &?N = h.head;\n    mut r: &N = heap(N::default());\n"
-     "    if (q != null) {\n        r = (q to &N);\n    }"),
-    ("via_call", "documented: through an intermediate call",
-     "fn id(p: &N): &N {\n    return p;\n}\nfn esc(c: int): &N {\n    mut n: N = N::default();\n"
-     "    n.val = 42;\n    return id(&n);\n}\n", "mut r: &N = esc(1);"),
-    ("array_element", "documented: &arr[i]",
-     "fn esc(c: int): &N {\n    mut a: N[2] = [N::default(), N::default()];\n"
-     "    a[0].val = 42;\n    return &a[0];\n}\n", "mut r: &N = esc(1);"),
-    ("heap_of_struct_with_ref", "documented: heap(m) where m holds &n",
-     "fn esc(c: int): &N {\n    mut n: N = N::default();\n    n.val = 42;\n"
-     "    mut m: N = N::default();\n    m.next = &n;\n    mut h: &N = heap(m);\n"
-     "    mut r: &?N = h.next;\n    if (r != null) {\n        return (r to &N);\n    }\n"
-     "    return h;\n}\n", "mut r: &N = esc(1);"),
+    # struct_copy, via_call, array_element and heap_of_struct_with_ref, the
+    # documented FDN-002 residuals, were closed in turflang 2026-10-12 and are
+    # now sources and sinks above (via_call, arr_elem, struct_*).
     ("defer_false_positive", "rejected, though the return value is computed before the defer",
      "fn esc(c: int): &N {\n    mut n: N = N::default();\n    n.val = 42;\n"
      "    mut p: &N = heap(n);\n    defer p = &n;\n    return p;\n}\n", "mut r: &N = esc(1);"),
@@ -241,7 +281,7 @@ def build_case(src, sink, wrap):
     # A `return` sink in straight-line code is the function's last word; its
     # fallback after it would be unreachable (E012). Inside a branch or a
     # loop the fallback is what the other paths return.
-    sink_returns = sk["stmt"].startswith("return")
+    sink_returns = sk.get("returns", sk["stmt"].startswith("return"))
     if sk["tail"] and (not sink_returns or wrap in NESTED):
         body.append(sk["tail"])
     ret = sk["ret"]
