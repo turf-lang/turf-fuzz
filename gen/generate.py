@@ -1223,17 +1223,22 @@ class Gen:
         if call is None:
             return None
         self.cost += spent
-        err = self.new_name("err")
+        # A third of the time the plain form, `recover run { ... }`: no binding,
+        # so nothing in the block can ask which error it was.
+        err = None if self.chance(0.33) else self.new_name("err")
         name_, variants = self.errors[0]
         self.in_run = True
         self.scope.push()
         try:
             body = []
-            if self.use_strings and self.chance(0.4):
+            if err is not None and self.use_strings and self.chance(0.4):
                 body.append(Print(ErrMsg(err)))
             if self.chance(0.6):
                 body.append(self.mix() if self.chance(0.5) else self.print_stmt())
-            body.append(If([[ErrIs(err, name_, self.pick(variants)), [self.jump()], 0]], None))
+            if err is not None:
+                body.append(If([[ErrIs(err, name_, self.pick(variants)), [self.jump()], 0]], None))
+            elif self.chance(0.4):
+                body.append(If([[self.bool_expr(2), [self.jump()], 0]], None))
             body.append(self.jump())
         finally:
             self.scope.pop()

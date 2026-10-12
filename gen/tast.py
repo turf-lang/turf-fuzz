@@ -571,7 +571,8 @@ class Compare:
 
 
 class RecoverRun:
-    """mut name: int = call recover as err run { body };   body diverges."""
+    """mut name: int = call recover as err run { body };   body diverges.
+    err None is the plain form, `recover run { body }`, with no binding."""
 
     def __init__(self, name, call, err, body):
         self.name, self.call, self.err, self.body = name, call, err, body
@@ -843,8 +844,8 @@ class _Renderer:
                 self.block(s.els, ind + 2)
             self.emit(ind, "}")
         elif isinstance(s, RecoverRun):
-            s.line = self.emit(ind, "mut %s: int = %s recover as %s run {" % (
-                s.name, self.expr(s.call), s.err))
+            how = "recover run {" if s.err is None else "recover as %s run {" % s.err
+            s.line = self.emit(ind, "mut %s: int = %s %s" % (s.name, self.expr(s.call), how))
             self.block(s.body, ind + 1)
             self.emit(ind, "};")
         elif isinstance(s, CStmt):

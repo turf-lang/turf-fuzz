@@ -738,7 +738,8 @@ class _Machine:
         elif isinstance(s, RecoverRun):
             v = self.ev(s.call, env)
             if isinstance(v, ErrV):
-                env[s.err] = v
+                if s.err is not None:
+                    env[s.err] = v
                 self.block(s.body, env)
                 raise AssertionError("recover run block fell off its end")
             env[s.name] = v
