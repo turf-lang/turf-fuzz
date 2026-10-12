@@ -186,7 +186,7 @@ come from a small domain (`e % 4..16`, short literals) so lookups hit.
 | Rule | Source |
 |---|---|
 | 1-2 enums of 2-4 variants, as locals, struct fields and array elements. A zero-filled or defaulted enum is the first variant. `(v to int)` is the 0-based ordinal, `(v to string)` the variant's name, `En::COUNT` the number of variants (an `int`, also under a cast: turflang 94c78ae); `==`/`!=` compare the same enum type; ordering operators are not defined. | doc `structs_and_enums.md` ("Enums"); probe (n1.tr) |
-| `(e to En)` from a run-time int is **not checked**: `(7 to En)` of a 3-variant enum is a value whose name is `<unknown enum>`. The generator only casts `((e % n) + n) % n`. Reported to the owner as a hole (the docs call it "allowed through"). | doc `structs_and_enums.md`; probe (n1.tr) |
+| `(e to En)` from a run-time int is checked: outside `0 <= e < n` it panics `Runtime Error: Invalid int to enum conversion.` The generator only casts `((e % n) + n) % n`. | doc `structs_and_enums.md`; owner decision 2026-10-12, turflang 0794134 (before: unchecked, a value named `<unknown enum>`) |
 | `compare (s) { matches p: [matches q:] body done ... otherwise: body }`: the subject is evaluated once, the first arm with an equal pattern runs, else `otherwise`, else nothing. Patterns in one `compare` are distinct. An enum `compare` covers every variant or has `otherwise`; an int one need not. An arm body is never empty (E058) and is a block for `defer`. `break`/`continue` in an arm target the enclosing loop. Negative literal patterns (`matches -1:`) are fine. | doc `control_flow.md`, `structs_and_enums.md` ("Exhaustiveness"); probe (n1.tr, n2.tr) |
 
 ## Indexing

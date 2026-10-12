@@ -31,6 +31,3 @@ oracles/soundness.py --gaps` shows what each does today.
   hole.** `mut a: string[2];` then reading an unwritten element is a null
   string (segfault); `mut a: H[2];` leaves a `&U` field null. Owner said
   2026-10-12: a separate issue from LEC-009.
-- **Unchecked run-time int-to-enum casts.** `(7 to En)` from a run-time int is
-  a value named `<unknown enum>` and defeats `compare` exhaustiveness (docs:
-  "allowed through").
