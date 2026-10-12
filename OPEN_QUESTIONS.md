@@ -24,9 +24,6 @@ oracles/soundness.py --gaps` shows what each does today.
 - **`defer` false positive.** `p = heap(n); defer p = &n; return p;` is
   rejected, although the returned value is computed before the defer runs. A
   simple fix is unsound inside loops; defers need handling at block exit.
-- **Casts to references.** `(0 to &N)`, `(s to &N)` and `(n to &M)` compile
-  in safe code and fault. Reject everywhere, or allow only inside `unsafe { }`
-  (as `T* -> &T` already is)?
 
 ## Still open from earlier items
 

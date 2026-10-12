@@ -1,6 +1,7 @@
-# OPEN (owner decision): `to` makes a safe reference out of an int, a string or another reference type
+# Accepted and faulted: `to` made a safe reference out of an int, a string or another reference type
 
-- class: accepted-but-unsound, not fixed
+- class: accepted-but-unsound
+- fixed: owner decision 2026-10-12, allowed only inside `unsafe { }`. turflang fb432ed: any cast to `&T`/`&?T` whose operand is not a reference with the same pointee (and not already gated as a raw pointer) is E130 outside `unsafe`; all three repros here are E130. Tests: `tests/05_arrays_pointers_ffi/fail_cast_int_to_reference_outside_unsafe.tr`, `fail_cast_string_to_reference_outside_unsafe.tr`, `fail_cast_reference_to_other_reference_outside_unsafe.tr`, `cast_to_reference_rules.tr`
 - found: reading `TypeChecker::visitCast()` while fixing `nullable-deref-not-a-variable`, compiler 813fb53 + d896209 + ec236f2
 - repro, all in safe code with no `unsafe`:
   - `min.tr`: `mut p: &N = (0 to &N); p.val` compiles; garbage at the default level, SIGSEGV at -O0
