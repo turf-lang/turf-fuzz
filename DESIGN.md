@@ -327,7 +327,9 @@ it.
 **Open findings.** `findings/unsound/escape-boundary`,
 `findings/unsound/int-to-reference-cast` and the questions in
 `OPEN_QUESTIONS.md`; `findings/leak/diagnostic-longjmp` (temporaries skipped
-by the `longjmp`).
+by the `longjmp`). One syntax error in a function body (`defer { }`) also
+reports "Unknown function" at every call of that function (a diagnostic
+cascade; no findings directory, found while building item 2).
 
 **CI.** Not yet run on GitHub: both repos must be pushed, the locked commit
 included. The `fuzz-finding` label does not exist yet.
