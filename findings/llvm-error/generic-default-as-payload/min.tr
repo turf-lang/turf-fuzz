@@ -1,0 +1,10 @@
+import list::List;
+error E1 { P2(items: List<int>), Q }
+fn f(k: int): !int {
+    if k == 7 { return E1::P2(List::default()); }
+    return k;
+}
+fn main(): int {
+    mut v: int = f(7) recover produce -1;
+    return v + 1;
+}
