@@ -24,7 +24,14 @@ from tast import (INT_MIN, INT_MAX, StructT, ArrT, SliceT, ListT, Lit, BLit,
                   Var, Un, Bin, Call, Give, Field, Index, ArrLit, Default,
                   ListNew, Length, CopyE, Pop, Decl, Assign, Comp, IncDec,
                   Print, If, While, ForRange, ForEach, MethodCall, Push, Break,
-                  Continue, Return, SLit, SCall, ToStr, CharAt)
+                  Continue, Return, SLit, SCall, ToStr, CharAt, ErrLit, Try,
+                  RecoverP, ErrIs, ErrMsg, Defer, RecoverRun)
+
+import sys
+
+# Recursive helpers nest up to REC_LEVELS deep per helper, several Python
+# frames per Turf call.
+sys.setrecursionlimit(20000)
 
 STEP_LIMIT = 3_000_000
 # A string longer than this ends the program as a Timeout (it is regenerated):
@@ -77,6 +84,13 @@ class Result:
 
 
 # ---------------------------------------------------------------------- values
+
+class ErrV:
+    """A failed !T: which variant, and its message ("" when none)."""
+
+    def __init__(self, variant, msg):
+        self.variant, self.msg = variant, msg
+
 
 class SV:
     """A struct value."""
@@ -176,6 +190,7 @@ class _Machine:
                         for st in program.structs for m in st.methods}
         self.out = []
         self.steps = 0
+        self.defers = []  # one list per block being run, innermost last
         self.line = 0  # line of the statement / branch being evaluated
 
     def tick(self):
@@ -275,6 +290,20 @@ class _Machine:
         if isinstance(e, SCall):
             args = [self.ev(a, env) for a in e.args]  # left to right
             return self.string_fn(e.fn, args)
+        if isinstance(e, ErrLit):
+            return ErrV(e.variant, "" if e.msg is None else self.ev(e.msg, env))
+        if isinstance(e, Try):
+            v = self.ev(e.call, env)
+            if isinstance(v, ErrV):
+                raise _Ret(v)  # unchanged, after this function's pending defers
+            return v
+        if isinstance(e, RecoverP):
+            v = self.ev(e.call, env)
+            return self.ev(e.fallback, env) if isinstance(v, ErrV) else v
+        if isinstance(e, ErrIs):
+            return env[e.err].variant == e.variant
+        if isinstance(e, ErrMsg):
+            return env[e.err].msg
         raise TypeError(e)
 
     def string_fn(self, fn, a):
@@ -407,8 +436,28 @@ class _Machine:
         self.line = saved
 
     def block(self, stmts, env):
-        for s in stmts:
-            self.stmt(s, env)
+        """Run a `{ }` block. Its defers run LIFO when it exits normally or by
+        return/break/continue/try, and not on a panic (no unwinding:
+        control_flow.md). A `return`'s value is computed before they run
+        (probe d1.tr)."""
+        defers = []
+        self.defers.append(defers)
+        try:
+            for s in stmts:
+                self.stmt(s, env)
+        except (_Ret, _Break, _Continue):
+            self.defers.pop()
+            self.run_defers(defers, env)
+            raise
+        except BaseException:
+            self.defers.pop()
+            raise
+        self.defers.pop()
+        self.run_defers(defers, env)
+
+    def run_defers(self, defers, env):
+        for d in reversed(defers):
+            self.stmt(d.stmt, env)
 
     def loop_body(self, body, env):
         """Run one iteration; True means break."""
@@ -486,6 +535,15 @@ class _Machine:
                 env[s.var] = cp(o.items[i])
                 if self.loop_body(s.body, env):
                     break
+        elif isinstance(s, Defer):
+            self.defers[-1].append(s)
+        elif isinstance(s, RecoverRun):
+            v = self.ev(s.call, env)
+            if isinstance(v, ErrV):
+                env[s.err] = v
+                self.block(s.body, env)
+                raise AssertionError("recover run block fell off its end")
+            env[s.name] = v
         elif isinstance(s, Break):
             raise _Break()
         elif isinstance(s, Continue):

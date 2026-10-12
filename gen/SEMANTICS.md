@@ -84,6 +84,18 @@ agree.
 | The evaluator gives up on a program (regenerates it) once a string passes 4096 bytes, since `s = s + s` in nested loops grows without bound. | scope |
 | **Never generated: `mut a: string[N];`** (or any zero-filled declaration holding a string). An element read before it is written is a null pointer, not `""`, and `a[1].length()` segfaults. Same family as the array-element `&U` hole, an open turflang issue (owner, 2026-10-12: separate from LEC-009). | probe (z1.tr) |
 
+## Errors, `defer`, recursion
+
+| Rule | Source |
+|---|---|
+| One `error E0 { A, B, C }` (1-3 variants) per program. A `!int` helper returns either an `int` or `E0::V` / `E0::V(msg)` (a `string` message). | doc `error_handling.md` |
+| `f() recover produce e` is the success value, or `e`; **`e` is evaluated only on failure**. Always parenthesized by the generator. | doc `error_handling.md`; probe (e2.tr) |
+| `mut v: int = f() recover as err run { ... };` runs the block only on failure, with `err` bound; the block ends in `return` (from the enclosing function), `break` or `continue`. `err == E0::V` compares the variant (true whatever the message); `err.message` is the message, `""` if none. | doc `error_handling.md`; probe (e1.tr) |
+| `try f()` (only in a `!int` helper, never in a `defer` or a recover block: E095) is the success value, or returns the error unchanged from the enclosing function after its pending defers. The generator parenthesizes it inside any operator. | doc `error_handling.md`; probe (e1.tr, e2.tr) |
+| `defer s;` runs `s` when the enclosing `{ }` block exits: normally, or by `return`, `break`, `continue` or `try`; LIFO; once per loop iteration; **never on a panic**. A `return`'s value is computed before the defers run. A panic inside a deferred statement reports the `defer`'s own line. `s` is a print, a `chk` mix or a scalar assignment. | doc `control_flow.md`; probe (d1.tr) |
+| `defer { ... }` is not accepted (E103), so a deferred print renders as `defer io::flush();` then `defer io::printline(e);` (LIFO: print, then flush). | probe |
+| A recursive helper takes the depth `d` first, returns at `d <= 0` before anything else, and calls itself once per level at the top of its body with `d - 1`; callers pass a literal 0..6. 100000-deep recursion works (probe), so depth is never the limit. | probe (d1.tr) |
+
 ## Indexing
 
 | Rule | Source |

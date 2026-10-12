@@ -16,6 +16,9 @@ Subset:
     comparisons, `s[i] to int`, and strings:: length, index_of,
     last_index_of, count_char, contains, starts_with, ends_with, repeat,
     substring, replace, to_upper, to_lower, trim, trim_start, trim_end;
+  * an error type, `!int` helpers returning `E0::V` (with a message),
+    `recover produce`, `recover as err run`, `try`; `defer`; recursive
+    helpers with a literal depth;
   * if/elseif/else, while with a bounded counter, `for i in a..b`,
     break/continue, helper functions returning int (calls only go to
     earlier functions, so no recursion), early return, printing.
@@ -40,7 +43,8 @@ from tast import (INT_MIN, INT_MAX, StructT, ArrT, SliceT, ListT, is_scalar,  # 
                   Default, ListNew, Length, CopyE, Pop, Decl, Assign, Comp,
                   IncDec, Print, If, While, ForRange, ForEach, MethodCall,
                   Push, Break, Continue, Return, Func, Method, Program,
-                  SLit, SCall, ToStr, CharAt, contains_string)
+                  SLit, SCall, ToStr, CharAt, contains_string, ErrLit, Try,
+                  RecoverP, ErrIs, ErrMsg, Defer, RecoverRun)
 import evaluate as ev  # noqa: E402
 
 BOUNDARY = [INT_MAX, INT_MIN, INT_MAX - 1, INT_MIN + 1, 2147483647, -2147483648,
@@ -169,6 +173,19 @@ def check_foldable(e):
         check_foldable(e.base)
         check_foldable(e.idx)
         return
+    if isinstance(e, Try):
+        check_foldable(e.call)
+        return
+    if isinstance(e, RecoverP):
+        check_foldable(e.call)
+        check_foldable(e.fallback)
+        return
+    if isinstance(e, (ErrIs, ErrMsg)):
+        return
+    if isinstance(e, ErrLit):
+        if e.msg is not None:
+            check_foldable(e.msg)
+        return
     if isinstance(e, Un):
         check_foldable(e.e)
         const_value(e)
@@ -213,6 +230,15 @@ class Gen:
         # Strings: GC-heavy (every +, to string and strings:: result is a new
         # GC block), also as struct fields and array/List elements.
         self.use_strings = r.random() < 0.4
+        self.use_errors = r.random() < 0.35   # error type, !int helpers, recover, try
+        self.use_defer = r.random() < 0.35
+        self.use_rec = r.random() < 0.35      # helpers that call themselves
+        self.errors = []
+        if self.use_errors:
+            self.errors = [("E0", ["A", "B", "C"][:r.randint(1, 3)])]
+        self.cur_fn = None     # the Func being generated (None in main/methods)
+        self.in_defer = False  # `try` is E095 inside a defer
+        self.in_run = False    # ... and kept out of recover blocks
         self.structs = []
         self.funcs = []
         self.opaque_used = False
@@ -655,8 +681,32 @@ class Gen:
         spent = self.mult * (callee.cost + 1)
         if self.cost + spent > self.cost_cap:
             return None
+        call = self.call_args(callee, depth)
+        if call is None:
+            return None
+        self.cost += spent
+        return self.handle_fallible(call, callee, depth)
+
+    def handle_fallible(self, call, callee, depth):
+        """A call as an int expression: a `!int` callee goes through `try`
+        (only in a `!int` function, never in a defer or recover block: E095)
+        or `recover produce` with a fallback evaluated only on failure."""
+        if not callee.fallible:
+            return call
+        if (self.cur_fn is not None and self.cur_fn.fallible and not self.in_defer
+                and not self.in_run and self.chance(0.4)):
+            return Try(call)
+        return RecoverP(call, self.gen_int(max(depth - 2, 0)))
+
+    def call_args(self, callee, depth):
+        """Call(callee, args), or None if an argument cannot be built. A
+        recursive callee's first argument is its depth, a literal in 0..6."""
         args = []
-        for _, t in callee.params:
+        params = callee.params
+        if callee.rec:
+            args.append(Lit(self.rng.randint(0, 6)))
+            params = params[1:]
+        for _, t in params:
             if isinstance(t, SliceT):
                 a = self.slice_arg(t)
             elif isinstance(t, ListT):
@@ -666,7 +716,6 @@ class Gen:
             if a is None:
                 return None
             args.append(a)
-        self.cost += spent
         return Call(callee.name, args)
 
     def lists_of(self, t, kinds=None):
@@ -768,6 +817,14 @@ class Gen:
             got = self.agg_stmt(depth)
             if got:
                 return got
+        if self.use_defer and not self.in_defer and self.chance(0.06):
+            got = self.defer_stmt()
+            if got:
+                return [got]
+        if self.use_errors and not self.in_method and not self.in_run and self.chance(0.06):
+            got = self.recover_run(depth)
+            if got:
+                return got
         k = r.random()
         if k < 0.17:
             return [self.gen_decl()]
@@ -799,8 +856,79 @@ class Gen:
                 return [If([[self.bool_expr(2), [self.pick([Break, Continue])()], 0]], None)]
         elif k < 0.96:
             if self.in_func and not self.in_method:
-                return [If([[self.bool_expr(2), [Return(self.int_expr(2))], 0]], None)]
+                return [If([[self.bool_expr(2), [self.return_stmt()], 0]], None)]
         return [self.mix()]
+
+    def return_stmt(self):
+        """An early return from a helper: in a `!int` one, half the time an
+        error, now and then with a message (`E0::A("...")`)."""
+        if self.cur_fn is not None and self.cur_fn.fallible and self.chance(0.5):
+            return Return(self.err_lit())
+        return Return(self.int_expr(2))
+
+    def err_lit(self):
+        name, variants = self.errors[0]
+        msg = None
+        if self.use_strings and self.chance(0.4):
+            msg = self.str_expr(1)
+        return ErrLit(name, self.pick(variants), msg)
+
+    def defer_stmt(self):
+        """defer <print | chk mix | scalar assignment>; never a jump (rejected)
+        and never a `try` (E095)."""
+        self.in_defer = True
+        try:
+            k = self.rng.random()
+            if k < 0.5:
+                inner = self.print_stmt()
+            elif k < 0.75:
+                inner = self.mix()
+            else:
+                inner = self.gen_assign()
+        finally:
+            self.in_defer = False
+        return Defer(inner) if inner is not None else None
+
+    def recover_run(self, depth):
+        """mut v: int = f(...) recover as err run { ...; if err == E0::X { jump }
+        jump };  The block must diverge (int success type): `return`, or
+        `break`/`continue` in a loop."""
+        fallible = [f for f in self.funcs if f.fallible]
+        if not fallible:
+            return None
+        callee = self.pick(fallible)
+        spent = self.mult * (callee.cost + 1)
+        if self.cost + spent > self.cost_cap:
+            return None
+        call = self.call_args(callee, depth)
+        if call is None:
+            return None
+        self.cost += spent
+        err = self.new_name("err")
+        name_, variants = self.errors[0]
+        self.in_run = True
+        self.scope.push()
+        try:
+            body = []
+            if self.use_strings and self.chance(0.4):
+                body.append(Print(ErrMsg(err)))
+            if self.chance(0.6):
+                body.append(self.mix() if self.chance(0.5) else self.print_stmt())
+            body.append(If([[ErrIs(err, name_, self.pick(variants)), [self.jump()], 0]], None))
+            body.append(self.jump())
+        finally:
+            self.scope.pop()
+            self.in_run = False
+        name = self.new_name("v")
+        self.scope.declare(name, "int", MUT)
+        return [RecoverRun(name, call, err, body)]
+
+    def jump(self):
+        if self.in_loop and self.chance(0.35):
+            return self.pick([Break, Continue])()
+        if self.cur_fn is not None and self.cur_fn.fallible and self.chance(0.3):
+            return Return(self.err_lit())
+        return Return(self.int_expr(2))
 
     def agg_stmt(self, depth):
         k = self.rng.random()
@@ -1133,22 +1261,50 @@ class Gen:
             return SliceT("int")
         return "int"
 
+    # The deepest a recursive helper is called (call_args): its cost is its
+    # body's cost times this many levels.
+    REC_LEVELS = 7
+
     def gen_func(self, idx):
         self.reset_fn(1500)
         self.in_func = True
-        params = []
+        fallible = self.use_errors and self.chance(0.5)
+        rec = self.use_rec and self.chance(0.4)
+        params = [("d", "int")] if rec else []
         for i in range(self.rng.randint(0, 3)):
             params.append(("p%d" % i, self.param_type()))
+        f = Func("f%d" % idx, params, [], fallible, rec)
+        self.cur_fn = f
         for n, t in params:
             self.scope.declare(n, t, SLICE_PARAM if isinstance(t, SliceT) else PARAM)
         self.scope.declare("chk", "int", MUT)
         body = [Decl("chk", "int", Lit(0), True)]
+        if rec:
+            # Base case first, so every level does at most one body's work.
+            body.append(If([[Bin("<=", Var("d", "int"), Lit(0)), [self.return_stmt()], 0]], None))
         body.extend(self.initial_vars())
         body.extend(self.gen_block(self.rng.randint(1, 6), 0))
+        if rec:
+            body.append(self.self_call(f))
         body.append(Return(self.int_expr(3)))
-        f = Func("f%d" % idx, params, body)
+        f.body = body
         f.cost = self.cost + 2
+        if rec:
+            f.cost *= self.REC_LEVELS
+        self.cur_fn = None
         return f
+
+    def self_call(self, f):
+        """chk = mix(chk, f(d - 1, ...)): one recursive call per level, at the
+        top of the body (never in a loop), so the work is linear in the depth.
+        An aggregate parameter is passed on as it is."""
+        args = [Bin("-", Var("d", "int"), Lit(1))]
+        for n, t in f.params[1:]:
+            args.append(Var(n, t) if not is_scalar(t) else self.value_expr(t, 1))
+        call = Call(f.name, args)
+        e = self.handle_fallible(call, f, 2)
+        inner = Bin("+", Bin("*", Var("chk", "int"), Lit(31)), Bin("%", e, Lit(1000003)))
+        return Assign(Var("chk", "int"), Bin("%", inner, Lit(1000000007)))
 
     def initial_vars(self):
         out = []
@@ -1190,7 +1346,7 @@ class Gen:
         funcs = list(self.funcs)
         if self.opaque_used:
             funcs.insert(0, Func("opaque", [("x", "int")], [Return(Var("x", "int"))]))
-        return Program(self.structs, funcs, main, self.seed, self.paren_mode)
+        return Program(self.structs, funcs, main, self.seed, self.paren_mode, self.errors)
 
 
 def generate(seed, allow_undefined=False, max_attempts=20):

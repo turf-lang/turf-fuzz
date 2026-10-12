@@ -209,6 +209,46 @@ class CharAt:
         self.base, self.idx = base, idx
 
 
+class ErrLit:
+    """E::V or E::V("message"): an error value, only ever returned."""
+    ty = "error"
+
+    def __init__(self, etype, variant, msg=None):
+        self.etype, self.variant, self.msg = etype, variant, msg
+
+
+class Try:
+    """try call: the success value, or return the error from here."""
+    ty = "int"
+
+    def __init__(self, call):
+        self.call = call
+
+
+class RecoverP:
+    """(call recover produce fallback); the fallback runs only on failure."""
+    ty = "int"
+
+    def __init__(self, call, fallback):
+        self.call, self.fallback = call, fallback
+
+
+class ErrIs:
+    """err == E::V   (err bound by `recover as err run`)."""
+    ty = "bool"
+
+    def __init__(self, err, etype, variant):
+        self.err, self.etype, self.variant = err, etype, variant
+
+
+class ErrMsg:
+    """err.message: "" when the variant was built without one."""
+    ty = "string"
+
+    def __init__(self, err):
+        self.err = err
+
+
 # The strings:: functions the generator calls, with their result types.
 STRING_FNS = {
     "length": "int", "index_of": "int", "last_index_of": "int",
@@ -384,6 +424,25 @@ class Push:
         self.line = 0
 
 
+class Defer:
+    """defer <stmt>;  stmt is a Print, Assign or Comp. Runs at the exit of
+    the enclosing block (also by return/break/continue/try), LIFO, never on
+    a panic. A deferred Print renders as `defer io::flush();` followed by
+    `defer io::printline(e);`, so its output is flushed like any print."""
+
+    def __init__(self, stmt):
+        self.stmt = stmt
+        self.line = 0
+
+
+class RecoverRun:
+    """mut name: int = call recover as err run { body };   body diverges."""
+
+    def __init__(self, name, call, err, body):
+        self.name, self.call, self.err, self.body = name, call, err, body
+        self.line = 0
+
+
 class Break:
     def __init__(self):
         self.line = 0
@@ -401,11 +460,13 @@ class Return:
 
 
 class Func:
-    def __init__(self, name, params, body):
+    def __init__(self, name, params, body, fallible=False, rec=False):
         self.name = name
         self.params = params  # list of (name, type)
         self.body = body      # list of statements, last is Return
         self.cost = 0
+        self.fallible = fallible  # returns !int
+        self.rec = rec            # first parameter is the recursion depth `d`
 
 
 class Method:
@@ -420,7 +481,8 @@ class Method:
 
 
 class Program:
-    def __init__(self, structs, funcs, main, seed=0, paren_mode="min"):
+    def __init__(self, structs, funcs, main, seed=0, paren_mode="min", errors=None):
+        self.errors = errors or []  # [(error type name, [variants])]
         self.structs = structs
         self.funcs = funcs
         self.main = main
@@ -438,6 +500,10 @@ def _prec(e):
         return PREC_UNARY
     if isinstance(e, Lit) and e.v < 0:
         return PREC_UNARY
+    if isinstance(e, ErrIs):
+        return PREC["=="]
+    if isinstance(e, Try):
+        return 1  # parenthesized inside any operator: `(try f(x)) * 2`
     return PREC_ATOM
 
 
@@ -450,7 +516,7 @@ def walk_stmts(stmts):
                 yield from walk_stmts(br[1])
             if s.els:
                 yield from walk_stmts(s.els)
-        elif isinstance(s, (While, ForRange, ForEach)):
+        elif isinstance(s, (While, ForRange, ForEach, RecoverRun)):
             yield from walk_stmts(s.body)
 
 
@@ -533,6 +599,17 @@ class _Renderer:
             return "(%s to string)" % self.expr(e.e, PREC_ATOM)
         if isinstance(e, CharAt):
             return "(%s[%s] to int)" % (self.expr(e.base, PREC_ATOM), self.expr(e.idx))
+        if isinstance(e, ErrLit):
+            s = "%s::%s" % (e.etype, e.variant)
+            return s if e.msg is None else s + "(%s)" % self.expr(e.msg)
+        if isinstance(e, Try):
+            return "try %s" % self.expr(e.call)
+        if isinstance(e, RecoverP):
+            return "(%s recover produce %s)" % (self.expr(e.call), self.expr(e.fallback))
+        if isinstance(e, ErrIs):
+            return "%s == %s::%s" % (e.err, e.etype, e.variant)
+        if isinstance(e, ErrMsg):
+            return "%s.message" % e.err
         raise TypeError(e)
 
     # -- statements
@@ -560,6 +637,21 @@ class _Renderer:
         elif isinstance(s, Print):
             s.line = self.emit(ind, "io::printline(%s);" % self.expr(s.e))
             self.emit(ind, "io::flush();")
+        elif isinstance(s, Defer):
+            if isinstance(s.stmt, Print):
+                self.emit(ind, "defer io::flush();")
+                s.stmt.line = s.line = self.emit(
+                    ind, "defer io::printline(%s);" % self.expr(s.stmt.e))
+            else:
+                start = len(self.lines)
+                self.stmt(s.stmt, ind)
+                self.lines[start] = "    " * ind + "defer " + self.lines[start].lstrip()
+                s.line = s.stmt.line
+        elif isinstance(s, RecoverRun):
+            s.line = self.emit(ind, "mut %s: int = %s recover as %s run {" % (
+                s.name, self.expr(s.call), s.err))
+            self.block(s.body, ind + 1)
+            self.emit(ind, "};")
         elif isinstance(s, Break):
             s.line = self.emit(ind, "break;")
         elif isinstance(s, Continue):
@@ -610,7 +702,8 @@ class _Renderer:
         if is_main:
             self.emit(0, "fn main(): int {")
         else:
-            self.emit(0, "fn %s(%s): int {" % (f.name, self.params(f.params)))
+            self.emit(0, "fn %s(%s): %s {" % (f.name, self.params(f.params),
+                                             "!int" if f.fallible else "int"))
         self.block(f.body, 1)
         self.emit(0, "}")
         self.emit(0, "")
@@ -627,6 +720,9 @@ class _Renderer:
         if _uses_list(self.p):
             self.emit(0, "import list::List;")
         self.emit(0, "")
+        for name, variants in self.p.errors:
+            self.emit(0, "error %s { %s }" % (name, ", ".join(variants)))
+            self.emit(0, "")
         for st in self.p.structs:
             self.emit(0, "struct %s { %s }" % (st.name, ", ".join(
                 "%s: %s" % (n, ty_str(t)) for n, t in st.fields)))
