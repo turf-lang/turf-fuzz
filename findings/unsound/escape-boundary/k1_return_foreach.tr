@@ -1,0 +1,23 @@
+import io;
+import list::List;
+import map::Map;
+import stack::Stack;
+import queue::Queue;
+import set::Set;
+struct N { val: int, next: &?N }
+struct H { k: int, head: &?N, own: &N }
+error E1 { P(r: &N), Q }
+fn clobber(d: int): int {
+    mut buf: int[64];
+    buf[0] = 0;
+    mut i: int = 0;
+    while i < 64 { buf[i] = 7777 + i; i = i + 1; }
+    if d > 0 { return clobber(d - 1) + buf[d]; }
+    return buf[5];
+}
+fn f(): &?N { mut a: N[2] = [N::default(), N::default()]; a[1].val = 42; mut q: &?N = null; for e in a { q = &e; } return q; }
+fn main(): int {
+    mut q: &?N = f();
+    clobber(3); if (q != null) { io::printline(q.val); }
+    return 0;
+}
