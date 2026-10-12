@@ -28,6 +28,7 @@ tier0/crash_fuzz.py --replay min.tr --replay-beside $TURF_ROOT/tests/NN_x/seed.t
 | `--replay FILE` | compile one file and print its signature |
 | `--replay-beside SEED` | with `--replay`: compile it in a mirror of SEED's directory, for mutants that import sibling modules |
 | `--max-iterations N` | stop after N compiles |
+| `--link` | link every program. Default: `--emit-obj` when the compiler has it (turfc interface 1.6+), so everything but the system linker runs |
 
 `TURF_ROOT` defaults to `../turflang` relative to the turf-fuzz root.
 
