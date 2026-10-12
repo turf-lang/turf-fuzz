@@ -93,6 +93,23 @@ class ListT:
         return ty_str(self)
 
 
+class CollT:
+    """Stack<K>, Queue<K>, Set<K> or Map<K, V>: a shared handle, like List."""
+
+    def __init__(self, kind, key, val=None):
+        self.kind, self.key, self.val = kind, key, val
+
+    def __eq__(self, o):
+        return (isinstance(o, CollT) and o.kind == self.kind and o.key == self.key
+                and o.val == self.val)
+
+    def __hash__(self):
+        return hash(("coll", self.kind, repr(self.key), repr(self.val)))
+
+    def __repr__(self):
+        return ty_str(self)
+
+
 class EnumT:
     def __init__(self, name, variants):
         self.name, self.variants = name, variants
@@ -128,6 +145,9 @@ def ty_str(t):
         return inner + "[]" if cut < 0 else inner[:cut] + "[]" + inner[cut:]
     if isinstance(t, ListT):
         return "List<%s>" % ty_str(t.elem)
+    if isinstance(t, CollT):
+        args = ty_str(t.key) if t.val is None else "%s, %s" % (ty_str(t.key), ty_str(t.val))
+        return "%s<%s>" % (t.kind, args)
     raise TypeError(t)
 
 
@@ -398,6 +418,8 @@ class CopyE:
         self.base = base
         if isinstance(base.ty, ListT):
             self.ty = ListT(base.ty.elem)
+        elif isinstance(base.ty, CollT):
+            self.ty = base.ty
         else:
             self.ty = SliceT(base.ty.elem)
 
@@ -406,6 +428,36 @@ class Pop:
     def __init__(self, base):
         self.base = base
         self.ty = base.ty.elem
+
+
+class CollNew:
+    """Stack::default(), Map::default(), ..."""
+
+    def __init__(self, ty):
+        self.ty = ty
+
+
+class CMeth:
+    """base.name(args) as an expression of type ty, on a Stack/Queue/Set/Map."""
+
+    def __init__(self, base, name, args, ty):
+        self.base, self.name, self.args, self.ty = base, name, args, ty
+
+
+class CIndex:
+    """s[i] on a Set (i-th member, no negative index) or m[k] on a Map."""
+    ty = "int"
+
+    def __init__(self, base, idx):
+        self.base, self.idx = base, idx
+
+
+class TryGet:
+    """(m.try_get(k) recover produce d)"""
+    ty = "int"
+
+    def __init__(self, base, key, fallback):
+        self.base, self.key, self.fallback = base, key, fallback
 
 
 # ----------------------------------------------------------------- statements
@@ -526,6 +578,14 @@ class RecoverRun:
         self.line = 0
 
 
+class CStmt:
+    """base.name(args);  -- push, enqueue, add, put, remove (Map)."""
+
+    def __init__(self, base, name, args):
+        self.base, self.name, self.args = base, name, args
+        self.line = 0
+
+
 class Break:
     def __init__(self):
         self.line = 0
@@ -623,6 +683,16 @@ def _uses_list(p):
     return False
 
 
+def _coll_kinds(p):
+    out = set()
+    bodies = [f.body for f in p.funcs + [p.main]]
+    for b in bodies:
+        for s in walk_stmts(b):
+            if isinstance(s, Decl) and isinstance(s.ty, CollT):
+                out.add(s.ty.kind)
+    return out
+
+
 class _Renderer:
     def __init__(self, program):
         self.p = program
@@ -681,6 +751,16 @@ class _Renderer:
             return "%s.copy()" % self.expr(e.base, PREC_ATOM)
         if isinstance(e, Pop):
             return "%s.pop()" % self.expr(e.base, PREC_ATOM)
+        if isinstance(e, CollNew):
+            return "%s::default()" % e.ty.kind
+        if isinstance(e, CMeth):
+            return "%s.%s(%s)" % (self.expr(e.base, PREC_ATOM), e.name,
+                                  ", ".join(self.expr(a) for a in e.args))
+        if isinstance(e, CIndex):
+            return "%s[%s]" % (self.expr(e.base, PREC_ATOM), self.expr(e.idx))
+        if isinstance(e, TryGet):
+            return "(%s.try_get(%s) recover produce %s)" % (
+                self.expr(e.base, PREC_ATOM), self.expr(e.key), self.expr(e.fallback))
         if isinstance(e, DLit):
             return repr(e.v)
         if isinstance(e, CLit):
@@ -767,6 +847,9 @@ class _Renderer:
                 s.name, self.expr(s.call), s.err))
             self.block(s.body, ind + 1)
             self.emit(ind, "};")
+        elif isinstance(s, CStmt):
+            s.line = self.emit(ind, "%s.%s(%s);" % (self.expr(s.base, PREC_ATOM), s.name,
+                                                    ", ".join(self.expr(a) for a in s.args)))
         elif isinstance(s, Break):
             s.line = self.emit(ind, "break;")
         elif isinstance(s, Continue):
@@ -834,6 +917,8 @@ class _Renderer:
         self.emit(0, "import io;")
         if _uses_list(self.p):
             self.emit(0, "import list::List;")
+        for kind in sorted(_coll_kinds(self.p)):
+            self.emit(0, "import %s::%s;" % (kind.lower(), kind))
         self.emit(0, "")
         for name, variants in self.p.errors:
             self.emit(0, "error %s { %s }" % (name, ", ".join(variants)))

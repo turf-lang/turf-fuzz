@@ -12,7 +12,7 @@ are silent; a disagreement is a finding, not a rule.
 | Rule | Source |
 |---|---|
 | `int` is 64-bit signed. `bool` is a distinct type; `&&`, `\|\|`, `!` yield `bool`. | doc `docs/reference/variables_and_types.md`; `FREEZE.md` 6.2 |
-| Generated types: `int`, `bool`, `string` (locals, struct fields, array and List elements), structs, sized arrays `T[N]` (also 2-D), `T[]` (parameters and `.copy()` locals), `List<T>` (locals; `List<int>` also as a helper parameter). `int32`, `double`, `char` (only as `s[i] to int`), enums, pointers, generics other than `List` are out of subset. | scope |
+| Generated types: `int`, `bool`, `string`, `double`, `int32`, `char`, enums (locals, struct fields, array elements; `int`, `string` and structs also as List elements), structs, sized arrays `T[N]` (also 2-D), `T[]` (parameters and `.copy()` locals), `List<T>` (locals; `List<int>` also as a helper parameter), `Stack`/`Queue`/`Set`/`Map` (locals). Pointers and references, user generics, error payloads and state machines are out of subset. | scope |
 | Every local is initialized at declaration, except `mut a: T[N];`, which the generator always follows at once with one element write (see Aggregates, definite assignment). | doc `FREEZE.md` F-INIT-1 |
 | Declaration needs an explicit `: Type`; `mut`/`immut` forms are used. `immut` is only generated for a scalar with a non-literal-only initializer (see constant folding). Aggregates are always `mut`. | doc variables_and_types.md |
 
@@ -95,6 +95,20 @@ agree.
 | `defer s;` runs `s` when the enclosing `{ }` block exits: normally, or by `return`, `break`, `continue` or `try`; LIFO; once per loop iteration; **never on a panic**. A `return`'s value is computed before the defers run. A panic inside a deferred statement reports the `defer`'s own line. `s` is a print, a `chk` mix or a scalar assignment. | doc `control_flow.md`; probe (d1.tr) |
 | `defer { ... }` is not accepted (E103), so a deferred print renders as `defer io::flush();` then `defer io::printline(e);` (LIFO: print, then flush). | probe |
 | A recursive helper takes the depth `d` first, returns at `d <= 0` before anything else, and calls itself once per level at the top of its body with `d - 1`; callers pass a literal 0..6. 100000-deep recursion works (probe), so depth is never the limit. | probe (d1.tr) |
+
+## `Stack`, `Queue`, `Set`, `Map`
+
+`Stack<int>`, `Queue<int>`, `Set<int>`, `Map<int, int>` and `Map<string, int>`
+locals. Like a List, each is a handle (F-COLL-1): `mut d: Map<..> = c;` and
+`d = c;` share one collection, `c.copy()` is independent. Keys and members
+come from a small domain (`e % 4..16`, short literals) so lookups hit.
+
+| Rule | Source |
+|---|---|
+| `Stack`: `push`, `pop`, `peek` (the last pushed), `length`. `Queue`: `enqueue`, `dequeue`, `peek` (the oldest), `length`. On an empty one: `prog.tr:<line>: Stack.pop: pop on empty stack`, `Stack.peek: peek on empty stack`, `Queue.dequeue: dequeue on empty queue`, `Queue.peek: peek on empty queue`. | doc `collections.md`; `stack.tr`, `queue.tr`; probe (k.tr) |
+| `Set`: `add` (no-op if present), `contains`, `index_of` (dense position or -1), `length`, `remove` (a `bool`), and `s[i]`, the i-th member in dense order for `0 <= i < length` only (**no negative index**; otherwise `Set[]: index out of bounds`). Members stay in insertion order until a `remove`, which moves the last member into the hole. | doc `collections.md`; `set.tr`; probe |
+| `Map`: `put` and `m[k] = v` overwrite in place or append; `get` and `m[k]` panic `Map.get: no such key` on a miss, with the caller's line for both; `contains`, `index_of`, `length`; `remove` (a statement) moves the last entry into the hole; `(m.try_get(k) recover produce d)` evaluates `d` only on a miss; `keys()` / `values()` are fresh `List`s in dense order. `m[k] = v` evaluates `v` before `k`. | doc `collections.md`, `operators.md` (value first); `map.tr`; turflang 1c7b790 (before it `m[k]` named a line of map.tr, against F-API-3) |
+| `copy()` keeps the dense order (a Queue's from its head). | `LEC-009.md`; turflang `tests/51_shared_collections/` |
 
 ## `double`, `int32`, `char` and conversions
 

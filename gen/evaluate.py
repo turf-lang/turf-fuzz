@@ -26,7 +26,8 @@ from tast import (INT_MIN, INT_MAX, StructT, ArrT, SliceT, ListT, Lit, BLit,
                   Print, If, While, ForRange, ForEach, MethodCall, Push, Break,
                   Continue, Return, SLit, SCall, ToStr, CharAt, ErrLit, Try,
                   RecoverP, ErrIs, ErrMsg, Defer, RecoverRun, EnumT, EnumLit,
-                  EnumOf, EnumTo, EnumCount, Compare, DLit, CLit, Conv)
+                  EnumOf, EnumTo, EnumCount, Compare, DLit, CLit, Conv, CollT,
+                  CollNew, CMeth, CIndex, TryGet, CStmt)
 import math
 
 import sys
@@ -44,6 +45,7 @@ LIST_GET_OOB = "List[]: index out of bounds"
 LIST_SET_OOB = "List[]=: index out of bounds"
 LIST_POP_EMPTY = "List.pop: pop on empty list"
 SUBSTRING_OOB = "strings.substring: index out of bounds"
+SET_INDEX_OOB = "Set[]: index out of bounds"
 STRING_INDEX_OOB = "String index out of bounds"
 # strings.tr trim(): space, tab, newline, carriage return only.
 TRIM_SET = " \t\n\r"
@@ -141,6 +143,31 @@ class LV:
         self.items = items
 
 
+class CV:
+    """A Stack, Queue, Set or Map: one shared header, like LV (LEC-009).
+    `keys` is the dense, insertion-ordered storage (a Stack's or Queue's
+    elements, a Set's members, a Map's keys); `vals` is a Map's values.
+    remove() moves the last entry into the hole (set.tr / map.tr)."""
+
+    def __init__(self, kind, keys=None, vals=None):
+        self.kind, self.keys, self.vals = kind, keys or [], vals or []
+
+    def copy(self):
+        return CV(self.kind, list(self.keys), list(self.vals))
+
+    def remove(self, k):
+        if k not in self.keys:
+            return False
+        i = self.keys.index(k)
+        last = len(self.keys) - 1
+        self.keys[i] = self.keys[last]
+        self.keys.pop()
+        if self.kind == "Map":
+            self.vals[i] = self.vals[last]
+            self.vals.pop()
+        return True
+
+
 def cp(v):
     if isinstance(v, SV):
         return SV({k: cp(x) for k, x in v.f.items()})
@@ -151,7 +178,7 @@ def cp(v):
 
 def store(v, ty):
     """The value a location of type ty receives: a view is never copied."""
-    if isinstance(ty, (SliceT, ListT)):
+    if isinstance(ty, (SliceT, ListT, CollT)):
         return v
     return cp(v)
 
@@ -301,6 +328,8 @@ class _Machine:
             return len(self.obj(e.base, env).items)
         if isinstance(e, CopyE):
             src = self.obj(e.base, env)
+            if isinstance(src, CV):
+                return src.copy()
             if isinstance(src, LV):
                 return LV([cp(x) for x in src.items])
             return AV([cp(x) for x in src.items])
@@ -324,6 +353,25 @@ class _Machine:
         if isinstance(e, SCall):
             args = [self.ev(a, env) for a in e.args]  # left to right
             return self.string_fn(e.fn, args)
+        if isinstance(e, CollNew):
+            return CV(e.ty.kind)
+        if isinstance(e, CMeth):
+            args = [self.ev(a, env) for a in e.args]  # arguments, then the receiver
+            return self.coll_method(self.obj(e.base, env), e.name, args)
+        if isinstance(e, CIndex):
+            c = self.obj(e.base, env)
+            k = self.ev(e.idx, env)
+            if c.kind == "Set":
+                if not 0 <= k < len(c.keys):  # no negative index on a Set
+                    self.trap(SET_INDEX_OOB)
+                return c.keys[k]
+            return self.coll_method(c, "get", [k])
+        if isinstance(e, TryGet):
+            c = self.obj(e.base, env)
+            k = self.ev(e.key, env)
+            if k in c.keys:
+                return c.vals[c.keys.index(k)]
+            return self.ev(e.fallback, env)  # only on a miss
         if isinstance(e, DLit):
             return e.v
         if isinstance(e, CLit):
@@ -356,6 +404,51 @@ class _Machine:
         if isinstance(e, ErrMsg):
             return env[e.err].msg
         raise TypeError(e)
+
+    def coll_method(self, c, name, a):
+        """lib/std/collections/{stack,queue,set,map}.tr."""
+        ks = c.keys
+        if name == "length":
+            return len(ks)
+        if name in ("push", "enqueue"):
+            ks.append(a[0])
+        elif name == "pop":
+            if not ks:
+                self.trap("Stack.pop: pop on empty stack")
+            return ks.pop()
+        elif name == "dequeue":
+            if not ks:
+                self.trap("Queue.dequeue: dequeue on empty queue")
+            return ks.pop(0)
+        elif name == "peek":
+            if not ks:
+                self.trap("Stack.peek: peek on empty stack" if c.kind == "Stack"
+                          else "Queue.peek: peek on empty queue")
+            return ks[-1] if c.kind == "Stack" else ks[0]
+        elif name == "add":
+            if a[0] not in ks:
+                ks.append(a[0])
+        elif name == "contains":
+            return a[0] in ks
+        elif name == "index_of":
+            return ks.index(a[0]) if a[0] in ks else -1
+        elif name == "remove":
+            return c.remove(a[0])  # a Set's is a bool; a Map's is a statement
+        elif name == "put":
+            if a[0] in ks:
+                c.vals[ks.index(a[0])] = a[1]
+            else:
+                ks.append(a[0])
+                c.vals.append(a[1])
+        elif name == "get":
+            if a[0] not in ks:
+                self.trap("Map.get: no such key")
+            return c.vals[ks.index(a[0])]
+        elif name in ("keys", "values"):
+            return LV(list(ks if name == "keys" else c.vals))  # a fresh List
+        else:
+            raise ValueError(name)
+        return None
 
     def convert(self, v, frm, to):
         """`to` between numeric types (variables_and_types.md, Legal
@@ -565,8 +658,15 @@ class _Machine:
         elif isinstance(s, Assign):
             p = s.place
             v = self.ev(s.e, env)  # the value first, then the place (List too)
+            if isinstance(p, CIndex):  # m[k] = v is put(k, v), key after the value
+                c = self.obj(p.base, env)
+                self.coll_method(c, "put", [self.ev(p.idx, env), v])
+                return
             c, k = self.locate(p, env)
             put(c, k, v, p.ty)
+        elif isinstance(s, CStmt):
+            args = [self.ev(a, env) for a in s.args]
+            self.coll_method(self.obj(s.base, env), s.name, args)
         elif isinstance(s, Comp):
             rhs = self.ev(s.e, env)
             c, k = self.locate(s.place, env)

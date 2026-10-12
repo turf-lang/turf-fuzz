@@ -20,7 +20,8 @@ Subset:
     `recover produce`, `recover as err run`, `try`; `defer`; recursive
     helpers with a literal depth; enums (ordinal and name casts, COUNT,
     ==) and `compare` over enums and ints; `double` (IEEE), `int32` and
-    `char` with the `to` conversions between them and int;
+    `char` with the `to` conversions between them and int; Stack, Queue,
+    Set and Map locals (shared, copied, emptied, missed);
   * if/elseif/else, while with a bounded counter, `for i in a..b`,
     break/continue, helper functions returning int (calls only go to
     earlier functions, so no recursion), early return, printing.
@@ -47,7 +48,8 @@ from tast import (INT_MIN, INT_MAX, StructT, ArrT, SliceT, ListT, is_scalar,  # 
                   Push, Break, Continue, Return, Func, Method, Program,
                   SLit, SCall, ToStr, CharAt, contains_string, ErrLit, Try,
                   RecoverP, ErrIs, ErrMsg, Defer, RecoverRun, EnumT, EnumLit,
-                  EnumOf, EnumTo, EnumCount, Compare, DLit, CLit, Conv)
+                  EnumOf, EnumTo, EnumCount, Compare, DLit, CLit, Conv, CollT,
+                  CollNew, CMeth, CIndex, TryGet, CStmt)
 import evaluate as ev  # noqa: E402
 
 BOUNDARY = [INT_MAX, INT_MIN, INT_MAX - 1, INT_MIN + 1, 2147483647, -2147483648,
@@ -183,7 +185,18 @@ def check_foldable(e):
         check_foldable(e.call)
         check_foldable(e.fallback)
         return
-    if isinstance(e, (ErrIs, ErrMsg, EnumLit, EnumCount, DLit, CLit)):
+    if isinstance(e, (ErrIs, ErrMsg, EnumLit, EnumCount, DLit, CLit, CollNew)):
+        return
+    if isinstance(e, CMeth):
+        for a in e.args:
+            check_foldable(a)
+        return
+    if isinstance(e, CIndex):
+        check_foldable(e.idx)
+        return
+    if isinstance(e, TryGet):
+        check_foldable(e.key)
+        check_foldable(e.fallback)
         return
     if isinstance(e, (EnumOf, EnumTo, Conv)):
         check_foldable(e.e)
@@ -240,6 +253,7 @@ class Gen:
         self.use_defer = r.random() < 0.35
         self.use_rec = r.random() < 0.35      # helpers that call themselves
         self.use_numeric = r.random() < 0.4   # double, int32, char and casts
+        self.use_colls = r.random() < 0.3     # Stack, Queue, Set, Map
         self.errors = []
         if self.use_errors:
             self.errors = [("E0", ["A", "B", "C"][:r.randint(1, 3)])]
@@ -341,9 +355,16 @@ class Gen:
                 opts += ["sarr"]
         if self.use_lists and not self.in_method:
             opts += ["list"]
+        if self.use_colls and not self.in_method:
+            opts += ["coll", "coll"]
         if not opts:
             return None
         k = self.pick(opts)
+        if k == "coll":
+            kind = self.pick(["Stack", "Queue", "Set", "Map", "Map"])
+            if kind != "Map":
+                return CollT(kind, "int")
+            return CollT("Map", "string" if self.use_strings and self.chance(0.4) else "int", "int")
         if k == "struct":
             return self.pick(self.structs)
         if k == "sarr":
@@ -596,6 +617,98 @@ class Gen:
         fn = self.pick(["contains", "starts_with", "ends_with"])
         return SCall(fn, [self.gen_str(depth - 1), self.str_leaf()])
 
+    # ------------------------------------------- Stack, Queue, Set, Map
+    def colls(self, kinds=None):
+        return [e for e in self.scope.entries()
+                if isinstance(e.ty, CollT) and (kinds is None or e.ty.kind in kinds)]
+
+    def coll_key(self, t, depth=1):
+        """A key or member from a small domain, so that lookups often hit."""
+        if t == "string":
+            return self.str_literal() if self.chance(0.7) else self.str_expr(depth)
+        return Bin("%", self.gen_int(depth), Lit(self.pick([4, 8, 8, 16])))
+
+    def coll_stmt(self):
+        cs = self.colls()
+        if not cs:
+            return None
+        e = self.pick(cs)
+        c, t = Var(e.name, e.ty), e.ty
+        if e.kind == MUT and self.chance(0.08):
+            others = [o for o in self.lists_of(t) if o.name != e.name]
+            if others:
+                o = Var(self.pick(others).name, t)
+                return [Assign(c, o if self.chance(0.5) else CopyE(o))]
+        nonempty = Bin(">", CMeth(c, "length", [], "int"), Lit(0))
+        k = self.rng.random()
+        if t.kind in ("Stack", "Queue"):
+            put, take = ("push", "pop") if t.kind == "Stack" else ("enqueue", "dequeue")
+            if k < 0.6:
+                return [CStmt(c, put, [self.int_expr(2)])]
+            name = self.new_name("v")
+            if self.chance(self.opaque_p * 3):
+                # May take from an empty one on purpose.
+                self.scope.declare(name, "int", MUT)
+                return [Decl(name, "int", CMeth(c, take, [], "int"))]
+            self.scope.push()
+            self.scope.declare(name, "int", MUT)
+            body = [Decl(name, "int", CMeth(c, take, [], "int")), self.mix()]
+            self.scope.pop()
+            return [If([[nonempty, body, 0]], None)]
+        if t.kind == "Set":
+            if k < 0.65:
+                return [CStmt(c, "add", [self.expr_ok(lambda: self.coll_key("int"))])]
+            name = self.new_name("b")
+            self.scope.declare(name, "bool", MUT)
+            return [Decl(name, "bool",
+                         CMeth(c, "remove", [self.expr_ok(lambda: self.coll_key("int"))], "bool"))]
+        key = self.expr_ok(lambda: self.coll_key(t.key), t.key)
+        if k < 0.45:
+            return [CStmt(c, "put", [key, self.int_expr(2)])]
+        if k < 0.75:
+            return [Assign(CIndex(c, key), self.int_expr(2))]  # m[k] = v
+        return [CStmt(c, "remove", [key])]
+
+    def coll_int(self, depth):
+        cs = self.colls()
+        if not cs:
+            return None
+        e = self.pick(cs)
+        c, t = Var(e.name, e.ty), e.ty
+        length = CMeth(c, "length", [], "int")
+        nonempty = Bin(">", length, Lit(0))
+        k = self.rng.random()
+        if k < 0.3:
+            return length
+        if t.kind in ("Stack", "Queue"):
+            peek = CMeth(c, "peek", [], "int")
+            return peek if self.chance(self.opaque_p * 3) else Give(nonempty, peek, Lit(0))
+        if t.kind == "Set":
+            if k < 0.6:
+                return CMeth(c, "index_of", [self.coll_key("int", depth - 1)], "int")
+            if self.chance(self.opaque_p * 3):
+                return CIndex(c, self.gen_int(depth - 1))  # may be out of range
+            n = length
+            idx = Bin("%", Bin("+", Bin("%", self.gen_int(depth - 1), n), n), n)
+            return Give(nonempty, CIndex(c, idx), Lit(0))  # a Set has no negative index
+        key = self.coll_key(t.key, depth - 1)
+        if k < 0.45:
+            return CMeth(c, "index_of", [key], "int")
+        if k < 0.65:
+            return TryGet(c, key, self.gen_int(depth - 1))
+        read = CIndex(c, key) if self.chance(0.5) else CMeth(c, "get", [key], "int")
+        if self.chance(self.opaque_p * 3):
+            return read  # may miss on purpose
+        return Give(CMeth(c, "contains", [key], "bool"), read, Lit(0))
+
+    def coll_bool(self, depth):
+        cs = self.colls(("Set", "Map"))
+        if not cs:
+            return None
+        e = self.pick(cs)
+        return CMeth(Var(e.name, e.ty), "contains",
+                     [self.coll_key(e.ty.key, depth - 1)], "bool")
+
     # --------------------------------------------------- double, int32, char
     DOUBLES = [0.5, 1.5, 2.0, 2.5, 0.1, 0.2, 3.0, 10.0, 100.0, 0.25, 1e-3,
                123.456, 7.0, 1e10, 1e16]
@@ -773,6 +886,10 @@ class Gen:
             return self.enum_int(depth)
         if self.use_numeric and self.chance(0.08):
             return self.numeric_int(depth)
+        if self.use_colls and self.chance(0.1):
+            got = self.coll_int(depth)
+            if got is not None:
+                return got
         k = r.random()
         if k < 0.30:
             return self.int_leaf(depth)
@@ -812,6 +929,10 @@ class Gen:
             return self.enum_bool(depth)
         if self.use_numeric and self.chance(0.1):
             return self.numeric_bool(depth)
+        if self.use_colls and self.chance(0.08):
+            got = self.coll_bool(depth)
+            if got is not None:
+                return got
         k = r.random()
         if k < 0.15:
             return self.bool_leaf(depth)
@@ -1000,7 +1121,7 @@ class Gen:
         return Assign(Var("chk", "int"), Bin("%", inner, Lit(1000000007)))
 
     def has_aggs(self):
-        return self.use_structs or self.use_arrays or self.use_lists
+        return self.use_structs or self.use_arrays or self.use_lists or self.use_colls
 
     def gen_stmt(self, depth):
         r = self.rng
@@ -1129,6 +1250,10 @@ class Gen:
         return Return(self.int_expr(2))
 
     def agg_stmt(self, depth):
+        if self.use_colls and self.chance(0.3):
+            got = self.coll_stmt()
+            if got:
+                return got
         k = self.rng.random()
         if k < 0.25:
             return self.agg_decl()
@@ -1178,6 +1303,17 @@ class Gen:
         t = self.agg_type()
         if t is None:
             return None
+        if isinstance(t, CollT):
+            # New, another name for one in scope, or a `.copy()` (F-COLL-1).
+            init = CollNew(t)
+            srcs = self.lists_of(t)
+            if srcs and self.chance(0.4):
+                e = self.pick(srcs)
+                v = Var(e.name, e.ty)
+                init = v if self.chance(0.5) else CopyE(v)
+            name = self.new_name("c")
+            self.scope.declare(name, t, MUT)
+            return [Decl(name, t, init)]
         if isinstance(t, ListT):
             # A new list, another name for one in scope (`=` shares,
             # LEC-009), or an independent `.copy()` of one.
@@ -1187,6 +1323,14 @@ class Gen:
                 e = self.pick(srcs)
                 v = Var(e.name, e.ty)
                 init = v if self.chance(0.5) else CopyE(v)
+            # A Map's keys() / values(): a fresh List in the map's dense order.
+            maps = [m for m in self.scope.entries()
+                    if isinstance(m.ty, CollT) and m.ty.kind == "Map"
+                    and t.elem in (m.ty.key, m.ty.val)]
+            if maps and self.chance(0.5):
+                m = self.pick(maps)
+                which = [n for n, kt in (("keys", m.ty.key), ("values", m.ty.val)) if kt == t.elem]
+                init = CMeth(Var(m.name, m.ty), self.pick(which), [], t)
             name = self.new_name("l")
             self.scope.declare(name, t, MUT)
             return [Decl(name, t, init)]
