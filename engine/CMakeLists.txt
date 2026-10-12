@@ -67,3 +67,22 @@ add_executable(reentrancy_check reentrancy_check.cpp)
 target_link_libraries(reentrancy_check PRIVATE turfcore)
 target_link_options(reentrancy_check PRIVATE -fsanitize=fuzzer-no-link)
 target_compile_definitions(reentrancy_check PRIVATE TURF_FUZZ_ROOT="${TURF_ROOT}")
+
+# Structure-aware variant (item 5): the same harness plus token/line-level
+# LLVMFuzzerCustomMutator and CustomCrossOver (mutator.cpp). A separate binary
+# so the byte-mutation one stays as it was, to measure against. Its token
+# tables and the -dict= file are generated from the compiler's lexer.
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(_tok_dir "${CMAKE_BINARY_DIR}/tokens")
+add_custom_command(
+  OUTPUT ${_tok_dir}/turf_tokens.inc ${_tok_dir}/turf.dict
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/gen_tokens.py ${TURF_ROOT} ${_tok_dir}
+  DEPENDS ${CMAKE_SOURCE_DIR}/gen_tokens.py ${TURF_ROOT}/src/Lexer.cpp)
+add_custom_target(turf_tokens DEPENDS ${_tok_dir}/turf_tokens.inc ${_tok_dir}/turf.dict)
+
+add_executable(fuzz_analyze_tok fuzz_analyze.cpp mutator.cpp)
+add_dependencies(fuzz_analyze_tok libfuzzer_local turf_tokens)
+target_include_directories(fuzz_analyze_tok PRIVATE ${_tok_dir})
+target_link_libraries(fuzz_analyze_tok PRIVATE ${_libfuzzer_out} turfcore)
+target_link_options(fuzz_analyze_tok PRIVATE -fsanitize=fuzzer-no-link)
+target_compile_definitions(fuzz_analyze_tok PRIVATE TURF_FUZZ_ROOT="${TURF_ROOT}")
