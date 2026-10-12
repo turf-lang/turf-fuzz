@@ -12,7 +12,7 @@ are silent; a disagreement is a finding, not a rule.
 | Rule | Source |
 |---|---|
 | `int` is 64-bit signed. `bool` is a distinct type; `&&`, `\|\|`, `!` yield `bool`. | doc `docs/reference/variables_and_types.md`; `FREEZE.md` 6.2 |
-| Generated types: `int`, `bool`, structs, sized arrays `T[N]` (also 2-D), `T[]` (parameters and `.copy()` locals), `List<T>`. `int32`, `double`, `char`, `string`, enums, pointers, generics other than `List` are out of subset. | scope |
+| Generated types: `int`, `bool`, structs, sized arrays `T[N]` (also 2-D), `T[]` (parameters and `.copy()` locals), `List<T>` (locals; `List<int>` also as a helper parameter). `int32`, `double`, `char`, `string`, enums, pointers, generics other than `List` are out of subset. | scope |
 | Every local is initialized at declaration, except `mut a: T[N];`, which the generator always follows at once with one element write (see Aggregates, definite assignment). | doc `FREEZE.md` F-INIT-1 |
 | Declaration needs an explicit `: Type`; `mut`/`immut` forms are used. `immut` is only generated for a scalar with a non-literal-only initializer (see constant folding). Aggregates are always `mut`. | doc variables_and_types.md |
 
@@ -59,7 +59,7 @@ are silent; a disagreement is a finding, not a rule.
 | `a.length()` is the element count; for a `T[N]` it is `N`. | doc `arrays.md` |
 | In `fn S.m(...)`, `self` is a pointer to the receiver: field writes are visible to the caller. Methods return `void`; only methods of structs declared earlier, or earlier methods of the same struct, are called, so there is no recursion. | doc `structs_and_enums.md` ("Instance methods and self") |
 | A struct value is never read as `self` itself (only its fields), and struct parameters are never written or used as method receivers. | scope |
-| `List<T>` is a `{data, len, cap}` value whose buffer is shared by copies: a callee's `push` on a by-value List parameter is invisible to the caller, while `m = l; m[0] = 50` shows through `l`. The generator never copies, assigns or passes a List. | probe (l1.tr) |
+| A `List<T>` value is a handle to one header: `mut m: List<T> = l;`, `m = l;` and passing `l` to a `List<int>` parameter all share it, length included, so a callee's `push`/`pop`/`l[i] = v` is visible to the caller and `m.push(7)` grows `l`. `l.copy()` is an independent List with copies of the elements. The generator emits aliases, rebinding between `mut` List locals, List parameters of helpers (never assigned) and `.copy()` both as an initializer and as an argument. | owner decision 2026-10-12, turflang LEC-009 (FREEZE F-COLL-1, `docs/reference/stdlib/collections.md` "Shared by default"); probe (pp.tr). Before LEC-009 a List was a `{data, len, cap}` value and the generator never copied, assigned or passed one |
 | `l[i]` reads by value; `l[i] = v` writes. A List element is never a place for a field write, a method call or a compound assignment (E098, E126). | doc `collections.md`; probe |
 | `for v in a` iterates the elements of an array or slice live (a write by the body to a later element is seen), over the length at loop start. `for (i, v) in a` also binds the index. | probe (o3.tr) |
 | `for i in lo..hi` runs `lo, lo+1, ..., hi-1`; `hi` is evaluated once. The generator uses literal bounds. | doc `control_flow.md`; probe (o3.tr) |

@@ -221,11 +221,15 @@ class Length:
 
 
 class CopyE:
-    """base.copy(): a fresh T[] on the GC heap."""
+    """base.copy(): a fresh T[] on the GC heap, or for a List an independent
+    List<T> (turflang LEC-009, F-COLL-1)."""
 
     def __init__(self, base):
         self.base = base
-        self.ty = SliceT(base.ty.elem)
+        if isinstance(base.ty, ListT):
+            self.ty = ListT(base.ty.elem)
+        else:
+            self.ty = SliceT(base.ty.elem)
 
 
 class Pop:
@@ -394,6 +398,9 @@ def walk_stmts(stmts):
 
 
 def _uses_list(p):
+    # A helper may take a List parameter with no List local anywhere.
+    if any(isinstance(t, ListT) for f in p.funcs for _, t in f.params):
+        return True
     bodies = [f.body for f in p.funcs + [p.main]]
     bodies += [m.body for st in p.structs for m in st.methods]
     for b in bodies:

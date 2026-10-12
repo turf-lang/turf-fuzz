@@ -537,6 +537,8 @@ class Gen:
         for _, t in callee.params:
             if isinstance(t, SliceT):
                 a = self.slice_arg(t)
+            elif isinstance(t, ListT):
+                a = self.list_arg(t)
             else:
                 a = self.gen_value(t, max(depth - 2, 0))
             if a is None:
@@ -544,6 +546,20 @@ class Gen:
             args.append(a)
         self.cost += spent
         return Call(callee.name, args)
+
+    def lists_of(self, t, kinds=None):
+        return [e for e in self.scope.entries()
+                if e.ty == t and (kinds is None or e.kind in kinds)]
+
+    def list_arg(self, t):
+        """A List of type t in scope, shared with the callee, or now and then
+        a `.copy()` of one, whose changes the caller never sees."""
+        cands = self.lists_of(t)
+        if not cands:
+            return None
+        e = self.pick(cands)
+        v = Var(e.name, e.ty)
+        return CopyE(v) if self.chance(0.2) else v
 
     def slice_arg(self, t):
         """A writable array (any length) or slice with t's element type."""
@@ -697,9 +713,17 @@ class Gen:
         if t is None:
             return None
         if isinstance(t, ListT):
+            # A new list, another name for one in scope (`=` shares,
+            # LEC-009), or an independent `.copy()` of one.
+            init = ListNew(t)
+            srcs = self.lists_of(t)
+            if srcs and self.chance(0.4):
+                e = self.pick(srcs)
+                v = Var(e.name, e.ty)
+                init = v if self.chance(0.5) else CopyE(v)
             name = self.new_name("l")
             self.scope.declare(name, t, MUT)
-            return [Decl(name, t, ListNew(t))]
+            return [Decl(name, t, init)]
         if isinstance(t, ArrT) and self.chance(0.2):
             # `mut a: int[3];` is zero-filled, but definite assignment (F-INIT-1)
             # counts the whole array unassigned until one element is written.
@@ -825,6 +849,13 @@ class Gen:
         lv = Var(e.name, e.ty)
         k = self.rng.random()
         guard = Bin(">", Length(lv), Lit(0))
+        if e.kind == MUT and self.chance(0.1):
+            # Rebind a local to another list (shared) or a copy of one.
+            others = [o for o in self.lists_of(e.ty) if o.name != e.name]
+            if others:
+                o = self.pick(others)
+                ov = Var(o.name, o.ty)
+                return [Assign(lv, ov if self.chance(0.5) else CopyE(ov))]
         if k < 0.55:
             return [Push(lv, self.value_expr(e.ty.elem, 2))]
         if k < 0.80:
@@ -947,6 +978,10 @@ class Gen:
             return self.pick(self.structs)
         if k < 0.9 and self.use_arrays:
             return ArrT("int", self.rng.randint(1, 4))
+        if k < 0.95 and self.use_lists:
+            # Shared with the caller (LEC-009): the callee's push/pop/[]=
+            # are visible after the call.
+            return ListT("int")
         if self.use_arrays:
             return SliceT("int")
         return "int"

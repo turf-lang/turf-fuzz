@@ -86,7 +86,9 @@ class AV:
 
 
 class LV:
-    """A List's storage."""
+    """A List: one shared header (turflang LEC-009, F-COLL-1). Every name
+    for a List holds this same object, so `=`, passing and returning share
+    it, length included; only `.copy()` makes a new one."""
 
     def __init__(self, items):
         self.items = items
@@ -240,7 +242,10 @@ class _Machine:
         if isinstance(e, Length):
             return len(self.obj(e.base, env).items)
         if isinstance(e, CopyE):
-            return AV([cp(x) for x in self.obj(e.base, env).items])
+            src = self.obj(e.base, env)
+            if isinstance(src, LV):
+                return LV([cp(x) for x in src.items])
+            return AV([cp(x) for x in src.items])
         if isinstance(e, Pop):
             lv = self.obj(e.base, env)
             if not lv.items:
