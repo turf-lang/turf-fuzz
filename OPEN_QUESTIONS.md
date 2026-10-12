@@ -30,10 +30,6 @@ oracles/soundness.py --gaps` shows what each does today.
 
 ## Still open from earlier items
 
-- **FREEZE §6.14 F-STR-1 vs #256.** F-STR-1 says a negative string index read
-  panics; #256 (turflang 2853007) made `s[-1]` the last byte, and
-  `operators.md` documents that. Changing a frozen decision's text needs the
-  owner.
 - **Null strings in zero-filled string arrays, and the array-element `&U`
   hole.** `mut a: string[2];` then reading an unwritten element is a null
   string (segfault); `mut a: H[2];` leaves a `&U` field null. Owner said
