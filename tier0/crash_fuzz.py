@@ -206,6 +206,8 @@ def main() -> int:
     ap.add_argument("--replay-beside", metavar="SEED",
                     help="with --replay: compile it in a mirror of SEED's directory (sibling imports)")
     ap.add_argument("--max-iterations", type=int, default=0, help="stop after N compiles (0 = time only)")
+    ap.add_argument("--keep-dups", metavar="DIR",
+                    help="also write each duplicate hit's input and output here")
     ap.add_argument("--minimize-probes", type=int, default=400)
     ap.add_argument("--minimize-seconds", type=float, default=180)
     args = ap.parse_args()
@@ -287,6 +289,17 @@ def main() -> int:
             if not store.claim(cls, sig, src, meta):  # existing signature: counter bumped
                 with lock:
                     stats["dup"] += 1
+                    n_dup = stats["dup"]
+                if args.keep_dups:
+                    # A signature can be generic ("generated LLVM IR is
+                    # invalid"): a duplicate may be a different bug, filed
+                    # under a finding that is long fixed. Keep its input.
+                    d = Path(args.keep_dups)
+                    d.mkdir(parents=True, exist_ok=True)
+                    stem = "%s-%d" % (sig.hash, n_dup)
+                    (d / (stem + ".tr")).write_text(src)
+                    (d / (stem + ".txt")).write_text(
+                        "seed file: %s\ncommand: %s\n\n%s" % (seed_rel, " ".join(map(str, cmd)), out))
                 continue
             def probe(candidate: str, farm=farm, name=name, binname=binname, opt=opt):
                 (farm / name).write_text(candidate)
