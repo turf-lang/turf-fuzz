@@ -156,10 +156,13 @@ Compiler under test: turflang ec236f2 (the two fixes below are in it).
 
 ## `Stack`, `Queue`, `Set`, `Map`
 
-`Stack<int>`, `Queue<int>`, `Set<int>`, `Map<int, int>` and `Map<string, int>`
-locals. Like a List, each is a handle (F-COLL-1): `mut d: Map<..> = c;` and
-`d = c;` share one collection, `c.copy()` is independent. Keys and members
-come from a small domain (`e % 4..16`, short literals) so lookups hit.
+`Stack<int>`, `Queue<int>`, and `Set<K>` / `Map<K, int>` with `K` one of
+`int`, `string`, `double` and `Kp`, as locals. Like a List, each is a handle
+(F-COLL-1): `mut d: Map<..> = c;` and `d = c;` share one collection,
+`c.copy()` is independent. Keys and members come from a small domain
+(`e % 4..16`, short literals, the doubles `0.0, -0.0, ±0.5, 1.5, 2.0, 1e10`,
+`kp(0..2, e % 2..4)`) so lookups hit; a bulk fill (`for r in 0..100-300`,
+keys outside that domain) grows a `double`/`Kp` table past 128 slots.
 
 | Rule | Source |
 |---|---|
@@ -167,6 +170,7 @@ come from a small domain (`e % 4..16`, short literals) so lookups hit.
 | `Set`: `add` (no-op if present), `contains`, `index_of` (dense position or -1), `length`, `remove` (a `bool`), and `s[i]`, the i-th member in dense order for `0 <= i < length` only (**no negative index**; otherwise `Set[]: index out of bounds`). Members stay in insertion order until a `remove`, which moves the last member into the hole. | doc `collections.md`; `set.tr`; probe |
 | `Map`: `put` and `m[k] = v` overwrite in place or append; `get` and `m[k]` panic `Map.get: no such key` on a miss, with the caller's line for both; `contains`, `index_of`, `length`; `remove` (a statement) moves the last entry into the hole; `(m.try_get(k) recover produce d)` evaluates `d` only on a miss; `keys()` / `values()` are fresh `List`s in dense order. `m[k] = v` evaluates `v` before `k`. | doc `collections.md`, `operators.md` (value first); `map.tr`; turflang 1c7b790 (before it `m[k]` named a line of map.tr, against F-API-3) |
 | `copy()` keeps the dense order (a Queue's from its head). | `LEC-009.md`; turflang `tests/51_shared_collections/` |
+| A key or member is found by `==`: `-0.0` and `0.0` are one key (the first one stored stays), and `Kp`, the fixed struct `{ c: char, n: int }` (7 bytes of padding, with a field-by-field `operator ==` and a `kp(c, n)` builder emitted when a program uses it), matches by its fields whatever its padding holds. A NaN key is never generated (never `==` itself). `s[i]` is read only from a `Set<int>`. | turflang FREEZE §6.8 `hash_of` (321dc58); before it, the pre-fix compiler gave a wrong answer on seed 352 (`Map<double, int>`) and differed at -O0 on seed 381 (`Map<Kp, int>`) |
 
 ## `double`, `int32`, `char` and conversions
 

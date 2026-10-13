@@ -28,7 +28,7 @@ from tast import (INT_MIN, INT_MAX, StructT, ArrT, SliceT, ListT, Lit, BLit,
                   RecoverP, ErrIs, ErrMsg, Defer, RecoverRun, EnumT, EnumLit,
                   EnumOf, EnumTo, EnumCount, Compare, DLit, CLit, Conv, CollT,
                   CollNew, CMeth, CIndex, TryGet, CStmt, GCall, GGet, GPut,
-                  RefT, Null, Heap, AddrOf, RefCast, IsNull, ErrCompare)
+                  RefT, Null, Heap, AddrOf, RefCast, IsNull, ErrCompare, KpKey)
 import math
 
 import sys
@@ -419,6 +419,10 @@ class _Machine:
             return e.v
         if isinstance(e, CLit):
             return ord(e.ch)
+        if isinstance(e, KpKey):
+            # Kp's `operator ==` compares the two fields, so equal keys are
+            # equal tuples: what CV's `k in keys` needs.
+            return ("Kp", self.ev(e.c, env), self.ev(e.n, env))
         if isinstance(e, Conv):
             return self.convert(self.ev(e.e, env), e.e.ty, e.to)
         if isinstance(e, EnumLit):

@@ -278,6 +278,19 @@ class CLit:
         self.ch = ch
 
 
+class KpKey:
+    """`kp(c, n)`: a value of the fixed key struct `Kp { c: char, n: int }`,
+    only ever a Map or Set key. The 7 padding bytes after `c` are what made
+    equal struct keys miss at -O0 before turflang's `hash_of` (321dc58);
+    `-0.0`/`0.0` double keys are the other half of that fix. `c` is a literal
+    0..2 (the char 'a'..'c'), `n` a small int. Rendered with its declarations
+    (`_KP_DECLS`) whenever a program contains one."""
+    ty = "Kp"
+
+    def __init__(self, c, n):
+        self.c, self.n = c, n
+
+
 class Conv:
     """(e to T) between int, double, int32 and char, or double -> string."""
 
@@ -838,6 +851,37 @@ def _uses_list(p):
     return False
 
 
+_KP_DECLS = (
+    "// A Map/Set key with 7 bytes of padding after `c` (turflang hash_of).",
+    "struct Kp { c: char, n: int }", "",
+    "operator ==(x: Kp, y: Kp): bool {",
+    "    return x.c == y.c && x.n == y.n;", "}", "",
+    "fn kp(c: int, n: int): Kp {",
+    "    mut k: Kp = Kp::default();",
+    "    k.c = ((97 + c) to char);",
+    "    k.n = n;",
+    "    return k;", "}", "")
+
+
+def _mentions_kp(node, seen):
+    """A `kp(...)` key, or a `Kp`-keyed collection type (a Map declared and
+    never given a key still names `Kp`), anywhere under node, types included."""
+    if isinstance(node, KpKey) or (isinstance(node, CollT) and node.key == "Kp"):
+        return True
+    if isinstance(node, (list, tuple)):
+        return any(_mentions_kp(x, seen) for x in node)
+    if type(node).__module__ != __name__ or not hasattr(node, "__dict__") or id(node) in seen:
+        return False
+    seen.add(id(node))
+    return any(_mentions_kp(v, seen) for v in vars(node).values())
+
+
+def _uses_kp(p):
+    seen = set()
+    return any(_mentions_kp(f, seen) for f in p.funcs + [p.main]) or any(
+        _mentions_kp(st, seen) for st in p.structs)
+
+
 def _coll_kinds(p):
     out = set()
     bodies = [f.body for f in p.funcs + [p.main]]
@@ -924,6 +968,8 @@ class _Renderer:
             return repr(e.v)
         if isinstance(e, CLit):
             return "'%s'" % e.ch
+        if isinstance(e, KpKey):
+            return "kp(%s, %s)" % (self.expr(e.c), self.expr(e.n))
         if isinstance(e, Conv):
             return "(%s to %s)" % (self.expr(e.e, PREC_ATOM), e.to)
         if isinstance(e, SLit):
@@ -1126,6 +1172,9 @@ class _Renderer:
         for en in self.p.enums:
             self.emit(0, "enum %s { %s }" % (en.name, ", ".join(en.variants)))
             self.emit(0, "")
+        if _uses_kp(self.p):
+            for line in _KP_DECLS:
+                self.emit(0, line)
         for base in self.p.gstructs:
             # A generic struct and its two methods, monomorphized once per
             # instantiation the program names.

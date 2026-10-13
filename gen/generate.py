@@ -56,7 +56,7 @@ from tast import (INT_MIN, INT_MAX, StructT, ArrT, SliceT, ListT, is_scalar,  # 
                   EnumOf, EnumTo, EnumCount, Compare, DLit, CLit, Conv, CollT,
                   CollNew, CMeth, CIndex, TryGet, CStmt, GCall, GGet, GPut,
                   RefT, Null, Heap, AddrOf, RefCast, IsNull, has_nonnull_ref,
-                  ErrArm, ErrCompare)
+                  ErrArm, ErrCompare, KpKey)
 import evaluate as ev  # noqa: E402
 
 BOUNDARY = [INT_MAX, INT_MIN, INT_MAX - 1, INT_MIN + 1, 2147483647, -2147483648,
@@ -252,6 +252,10 @@ def check_foldable(e):
     if isinstance(e, TryGet):
         check_foldable(e.key)
         check_foldable(e.fallback)
+        return
+    if isinstance(e, KpKey):
+        check_foldable(e.c)
+        check_foldable(e.n)
         return
     if isinstance(e, (EnumOf, EnumTo, Conv)):
         check_foldable(e.e)
@@ -512,9 +516,10 @@ class Gen:
             return self.ginst(self.scalar_type())
         if k == "coll":
             kind = self.pick(["Stack", "Queue", "Set", "Map", "Map"])
-            if kind != "Map":
+            if kind in ("Stack", "Queue"):
                 return CollT(kind, "int")
-            return CollT("Map", "string" if self.use_strings and self.chance(0.4) else "int", "int")
+            key = self.coll_key_type()
+            return CollT("Set", key) if kind == "Set" else CollT("Map", key, "int")
         if k == "struct":
             return self.pick(self.structs)
         if k == "sarr":
@@ -1179,10 +1184,31 @@ class Gen:
         return [e for e in self.scope.entries()
                 if isinstance(e.ty, CollT) and (kinds is None or e.ty.kind in kinds)]
 
+    # Double keys: a small domain with both signed zeros, which `==` calls one
+    # key (turflang hash_of, 321dc58; a raw-byte hash split them).
+    KEY_DOUBLES = [0.0, -0.0, 0.0, -0.0, 0.5, -0.5, 1.5, 2.0, 1e10]
+
+    def coll_key_type(self):
+        """A Set's member or Map's key type: int, and with their features on,
+        string, double and the padded struct `Kp` (tast.KpKey)."""
+        opts = ["int", "int", "int"]
+        if self.use_strings:
+            opts.append("string")
+        if self.use_numeric:
+            opts.append("double")
+        if self.use_structs:
+            opts.append("Kp")
+        return self.pick(opts)
+
     def coll_key(self, t, depth=1):
         """A key or member from a small domain, so that lookups often hit."""
         if t == "string":
             return self.str_literal() if self.chance(0.7) else self.str_expr(depth)
+        if t == "double":
+            return DLit(self.pick(self.KEY_DOUBLES))
+        if t == "Kp":
+            return KpKey(Lit(self.rng.randint(0, 2)),
+                         Bin("%", self.gen_int(depth), Lit(self.pick([2, 4]))))
         return Bin("%", self.gen_int(depth), Lit(self.pick([4, 8, 8, 16])))
 
     def coll_stmt(self):
@@ -1212,11 +1238,26 @@ class Gen:
             body = [Decl(name, "int", CMeth(c, take, [], "int")), self.mix()]
             self.scope.pop()
             return [If([[nonempty, body, 0]], None)]
+        if t.key in ("double", "Kp") and self.mult <= 4 and self.chance(0.25):
+            # Bulk fill with keys outside the lookup domain, so the table
+            # grows past 128 slots: smaller, the signed zeros' old byte hashes
+            # (differing by a multiple of 128) landed in the same slot, and a
+            # padded key's junk bytes had few slots to scatter to. The small-
+            # domain keys are then built and looked up from other statements.
+            n = self.rng.randint(100, 300)
+            r = self.new_name("r")
+            iv = Var(r, "int")
+            if t.key == "double":
+                key = Bin("+", Conv(iv, "double"), DLit(0.25))  # never 0.5, ±0.0, ...
+            else:
+                key = KpKey(Lit(self.rng.randint(0, 2)), Bin("+", iv, Lit(100)))
+            put = CStmt(c, "add", [key]) if t.kind == "Set" else CStmt(c, "put", [key, iv])
+            return [ForRange(r, 0, n, [put])]
         if t.kind == "Set":
             if k < 0.65:
-                return [CStmt(c, "add", [self.expr_ok(lambda: self.coll_key("int"))])]
+                return [CStmt(c, "add", [self.expr_ok(lambda: self.coll_key(t.key), t.key)])]
             # The key before the name is declared: it must not mention it.
-            key = self.expr_ok(lambda: self.coll_key("int"))
+            key = self.expr_ok(lambda: self.coll_key(t.key), t.key)
             name = self.new_name("b")
             self.scope.declare(name, "bool", MUT)
             return [Decl(name, "bool", CMeth(c, "remove", [key], "bool"))]
@@ -1242,8 +1283,8 @@ class Gen:
             peek = CMeth(c, "peek", [], "int")
             return peek if self.chance(self.opaque_p * 3) else Give(nonempty, peek, Lit(0))
         if t.kind == "Set":
-            if k < 0.6:
-                return CMeth(c, "index_of", [self.coll_key("int", depth - 1)], "int")
+            if k < 0.6 or t.key != "int":  # s[i] is a member: an int only here
+                return CMeth(c, "index_of", [self.coll_key(t.key, depth - 1)], "int")
             if self.chance(self.opaque_p * 3):
                 return CIndex(c, self.gen_int(depth - 1))  # may be out of range
             n = length
@@ -1665,6 +1706,8 @@ class Gen:
             return self.zero_of(ty)
         if isinstance(ty, RefT):
             return Null(ty) if ty.nullable else Heap(Default(ty.st))
+        if ty == "Kp":
+            return KpKey(Lit(0), Lit(0))
         return None
 
     def int_expr(self, depth=3):
