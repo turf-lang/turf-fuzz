@@ -26,7 +26,14 @@ keep_re='^(main|LLVMFuzzer|__libfuzzer|__sanitizer|__sancov|_ZN6fuzzer|_ZNK6fuzz
 
 nm -g --defined-only "$in" | awk 'NF==3 {print $3}' | sort -u > "$tmp/all"
 grep -E "$keep_re" "$tmp/all" > "$tmp/keep" || true
-if [ "$(wc -l < "$tmp/all")" = "$(wc -l < "$tmp/keep")" ]; then
+# Only a runtime that bundles a C++ ABI (__dynamic_cast, operator new) leaks.
+# One built against the system libstdc++ (Ubuntu's apt.llvm.org packages)
+# defines nothing of it, and its other globals are libstdc++ template
+# instantiations in COMDAT groups shared with turfcore: made local, the linker
+# keeps libFuzzer's copy, discards turfcore's, and turfcore's references to
+# them are left undefined ("defined in discarded section").
+if ! grep -qxE '__dynamic_cast|_Znwm|_Znwj' "$tmp/all" ||
+   [ "$(wc -l < "$tmp/all")" = "$(wc -l < "$tmp/keep")" ]; then
   cp "$in" "$out"
   exit 0
 fi
