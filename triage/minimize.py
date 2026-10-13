@@ -1,6 +1,6 @@
 """minimize.py -- line-based delta debugging that keeps the SAME signature.
 
-Factored out of turflang's scripts/fuzz/crash_fuzz.py.  Two differences:
+Factored out of turflang's scripts/dev/fuzz/crash_fuzz.py.  Two differences:
 
   * the predicate is "still has this exact signature", not "still crashes":
     a reduction that trades the original stack overflow for an unrelated

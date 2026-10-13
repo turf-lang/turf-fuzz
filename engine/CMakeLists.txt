@@ -77,7 +77,7 @@ set(_tok_dir "${CMAKE_BINARY_DIR}/tokens")
 add_custom_command(
   OUTPUT ${_tok_dir}/turf_tokens.inc ${_tok_dir}/turf.dict
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/gen_tokens.py ${TURF_ROOT} ${_tok_dir}
-  DEPENDS ${CMAKE_SOURCE_DIR}/gen_tokens.py ${TURF_ROOT}/src/Lexer.cpp)
+  DEPENDS ${CMAKE_SOURCE_DIR}/gen_tokens.py ${TURF_ROOT}/src/frontend/Lexer.cpp)
 add_custom_target(turf_tokens DEPENDS ${_tok_dir}/turf_tokens.inc ${_tok_dir}/turf.dict)
 
 add_executable(fuzz_analyze_tok fuzz_analyze.cpp mutator.cpp)

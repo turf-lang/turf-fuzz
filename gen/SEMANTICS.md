@@ -24,11 +24,11 @@ are silent; a disagreement is a finding, not a rule.
 | Unary `-` traps (`Integer overflow`) on INT_MIN. | `tests/36_numeric_semantics/fail_runtime_overflow_negate.tr`; probe |
 | `x++`, `x--`, `x op= e` trap `Integer overflow` exactly like the plain operators (same text, same line). | probe |
 | `/` truncates toward zero; `%` takes the sign of the dividend: `-7/2 = -3`, `-7%2 = -1`, `7/-2 = -3`, `7%-2 = 1`. | doc `operators.md`; probe |
-| `/` by zero traps `Division by zero`; `%` by zero traps `Modulo by zero`. In compound assignment the texts gain ` in compound assignment`. | probe; `src/CodegenExpr.cpp`, `src/CodegenVar.cpp` |
+| `/` by zero traps `Division by zero`; `%` by zero traps `Modulo by zero`. In compound assignment the texts gain ` in compound assignment`. | probe; `src/codegen/CodegenExpr.cpp`, `src/codegen/CodegenVar.cpp` |
 | `INT_MIN / -1` traps `Integer overflow` (checked after the zero check), also for `/=`. | `tests/36_numeric_semantics/fail_runtime_overflow_div_intmin_negone.tr` |
 | `INT_MIN % -1` (and `%=`) is `0` at every level. | owner decision 2026-10-11; turflang 20385de; `tests/36_numeric_semantics/06_...` |
 | `& \| ^` are two's-complement bitwise on `int` and never trap; `~x == -(x + 1)`. | doc `operators.md` |
-| `a << s` and `a >> s` trap `Integer overflow` if `s` is outside [0, 63]. `<<` also traps if a set bit is shifted out past the sign, i.e. if `a * 2^s` is not representable. `>>` is arithmetic (sign-filling). Same text for `<<=` and `>>=`. | doc `operators.md`; `src/CodegenCore.cpp` EmitCheckedShl/EmitCheckedShr; owner decision 2026-10-11 for `>>` (turflang e9a0617) |
+| `a << s` and `a >> s` trap `Integer overflow` if `s` is outside [0, 63]. `<<` also traps if a set bit is shifted out past the sign, i.e. if `a * 2^s` is not representable. `>>` is arithmetic (sign-filling). Same text for `<<=` and `>>=`. | doc `operators.md`; `src/codegen/CodegenCore.cpp` EmitCheckedShl/EmitCheckedShr; owner decision 2026-10-11 for `>>` (turflang e9a0617) |
 | Operands are evaluated left to right, including call arguments; the first trap in that order wins. | probe. Docs state L-to-R only for `for` ranges. |
 | `&&` and `\|\|` short-circuit. | doc `operators.md`; probe |
 | `(c give a otherwise b)` evaluates only the selected branch. It is always parenthesized by the generator. | doc `control_flow.md`; probe |
@@ -177,7 +177,7 @@ keys outside that domain) grows a `double`/`Kp` table past 128 slots.
 | Rule | Source |
 |---|---|
 | `double` is IEEE binary64. `+ - *` never trap: overflow is `inf`, and `inf - inf`, `0 * inf` are NaN. `/` and `%` by zero (also `-0.0`) trap `Division by zero` / `Modulo by zero` (with ` in compound assignment` for `/=`, `%=`), which is why a NaN is only reachable through an overflow. `%` is C `fmod` (sign of the dividend). Unary `-` never traps. | doc `FREEZE.md` 6.2 (row 6 and the division bullet), `operators.md`; probe (f1.tr, c1.tr) |
-| Comparisons are IEEE: every ordered comparison with a NaN is false, `!=` is true; `-0.0 == 0.0`. | `src/CodegenExpr.cpp` (OEQ/UNE/OLT...); probe |
+| Comparisons are IEEE: every ordered comparison with a NaN is false, `!=` is true; `-0.0 == 0.0`. | `src/codegen/CodegenExpr.cpp` (OEQ/UNE/OLT...); probe |
 | A double prints, and converts `to string`, as C `%g` (6 significant digits: `0.333333`, `1e+21`, `-0`, `inf`); **a NaN is always `nan`**. Python's `%g` is the same function. | doc `io_and_net.md`; owner decision 2026-10-12, turflang 402eb39 / e0c6ea0 (before: `-nan` at -O0, `nan` at -O2) |
 | `(i to double)` rounds to nearest. `(d to int)` truncates toward zero and **traps `Integer overflow`** for a NaN, ±inf or a value outside [-2^63, 2^63); `(d to int32)` likewise outside (-2^31 - 1, 2^31). | doc `FREEZE.md` 6.2 row 5, `variables_and_types.md` ("Legal conversions"); owner decision 2026-10-12, turflang e0c6ea0 (before: LLVM poison, INT_MIN at -O0 and garbage at -O2) |
 | `(i to int32)` keeps the low 32 bits (signed); `(x to int)` of an int32 sign-extends. **`int32 + int32` is an `int`**, so the generator does no arithmetic on int32: it converts in, stores, and converts out. | doc `variables_and_types.md`; probe (c1.tr: `mut s: int32 = b + b;` is E066) |
@@ -199,7 +199,7 @@ keys outside that domain) grows a `double`/`Kp` table past 128 slots.
 |---|---|
 | An index `i` into `N` elements is valid for `-N <= i < N`; a negative index counts from the end, once (no modular wrap). Same rule for `T[N]`, `T[]` and `List`. | doc `arrays.md` ("Negative indices"), `collections.md` |
 | A provably out-of-range constant index into a `T[N]` is a compile error, so the generator indexes a `T[N]` only with a literal in range, `e % N` (always in range, sign of the dividend), or `opaque(e)`, a helper the range analysis cannot see through. A slice is indexed with `0`, `-1` (never empty), `e % s.length()` or `opaque(e)`; a List with `e % l.length()` under a `l.length() > 0` guard, or `opaque(e)`. | doc `arrays.md` ("Bounds checking"); probe (a2.tr) |
-| An out-of-range array index traps `Array index out of bounds for '<name>'`, where `<name>` is the indexed variable, or `array` for any other base (a field, an element). Line: the statement's. | `src/CodegenArray.cpp` ArrayDisplayName; turflang a89bd67 (before it, every `T[N]` said `array`) |
+| An out-of-range array index traps `Array index out of bounds for '<name>'`, where `<name>` is the indexed variable, or `array` for any other base (a field, an element). Line: the statement's. | `src/codegen/CodegenArray.cpp` ArrayDisplayName; turflang a89bd67 (before it, every `T[N]` said `array`) |
 | An out-of-range List read prints `prog.tr:<line>: List[]: index out of bounds`, a write `prog.tr:<line>: List[]=: index out of bounds` (turflang 8467172; before it, no location); `pop` on an empty List prints `prog.tr:<line>: List.pop: pop on empty list`. All abort. | probe (l2.tr, l3.tr, l4.tr) |
 
 ## Evaluation order of places
@@ -237,7 +237,7 @@ keys outside that domain) grows a `double`/`Kp` table past 128 slots.
 | Name | Meaning | Source |
 |---|---|---|
 | `TURF_GC_STRESS=1` | collect on every allocation | `AGENTS.md` (turflang) |
-| `TURF_GC_VALIDATE=1` | independent mark phase, panics `GC root missed`, prints `TURF_GC_VALIDATE:` lines on stderr | `AGENTS.md`; `src/TestRunner.cpp` |
+| `TURF_GC_VALIDATE=1` | independent mark phase, panics `GC root missed`, prints `TURF_GC_VALIDATE:` lines on stderr | `AGENTS.md`; `src/tooling/TestRunner.cpp` |
 
 | `TURFC_ASAN` (oracle) | the compiler of a tree configured `-DTURF_RT_SANITIZE=ON` (default `$TURF_ROOT/build_asan/turfc`): every program it compiles links `libturfrt_asan`, the runtime and collector under ASan + UBSan. Run with `ASAN_OPTIONS=detect_leaks=0`, plain and under `TURF_GC_STRESS=1`, at `-O0` and `-O2`. The program's own code is not instrumented: a report means the runtime touched freed or foreign memory (a live block collected, then scanned, copied or printed). | `AGENTS.md` ("An ASan runtime"), `CMakeLists.txt` `TURF_RT_SANITIZE`; verified with a planted double free |
 

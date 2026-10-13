@@ -17,7 +17,7 @@ Never discard a minimized reproducer.
 | Dir | What |
 |---|---|
 | `compiler.lock` | turflang commit under test; every finding records it |
-| `tier0/` | black-box token/line mutation crash fuzzer (port of turflang `scripts/fuzz/crash_fuzz.py`); see `tier0/README.md` |
+| `tier0/` | black-box token/line mutation crash fuzzer (port of turflang `scripts/dev/fuzz/crash_fuzz.py`); see `tier0/README.md` |
 | `gen/` | typed program generator + reference evaluator (knows the expected result); every rule it relies on is in `gen/SEMANTICS.md`. `gen/trace.py SEED` finds the first statement where a wrong answer diverges; `gen/reduce.py SEED` shrinks a finding on the AST while its verdict stays the same |
 | `oracles/` | differential (`-O` levels, `-g`, GC stress/validate, the ASan runtime; `run.py` loops over seeds), soundness (`soundness.py`: the F-MEM-5 escape boundary) |
 | `engine/` | libFuzzer in-process targets over `include/turf/Analysis.h` (C++, clang); see `engine/README.md` |

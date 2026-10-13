@@ -11,7 +11,7 @@ Made by the owner; change them only with the owner.
 - **A separate repository.** Fuzzing has a different cadence (hours, large
   corpora) and its own CI budget. turflang's CI never depends on this repo;
   turflang keeps only its three-minute per-push crash fuzz
-  (`scripts/fuzz/crash_fuzz.py`, job `compiler_sanitizers`).
+  (`scripts/dev/fuzz/crash_fuzz.py`, job `compiler_sanitizers`).
 - **Python 3, stdlib only**, for the generator, oracles, triage and
   orchestration. The libFuzzer targets are C++ built with clang.
 - **Findings live in this repo's tracker** (`findings/<class>/<name>/`) and are
@@ -181,7 +181,7 @@ Coverage-guided, in-process, under ASan + UBSan, over `turf::analyze()`
 custom mutator and cross-over), and `reentrancy_check`, the gate that must
 pass before anything the fuzzers report is trusted (every test file analysed
 in two orders, identical results). The token tables and dictionary are
-generated from `src/Lexer.cpp` at build time. About 7 exec/s per worker on
+generated from `src/frontend/Lexer.cpp` at build time. About 7 exec/s per worker on
 whole-program seeds; 28k edges after 20 minutes.
 
     CC=clang CXX=clang++ cmake -S engine -B engine/build -G Ninja

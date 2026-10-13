@@ -4,8 +4,8 @@ Mutates turflang's own programs (`$TURF_ROOT/{tests,showcase,examples}`, about
 1200 seeds) at token and line level, compiles each mutant with `turfc`, and
 reports anything that is not a clean exit 0/1: sanitizer reports, LLVM
 assertions / `LLVM ERROR` / internal errors, signals, hangs, other exit codes.
-Port of turflang `scripts/fuzz/crash_fuzz.py`; self-contained (mutators are in
-`mutate.py`, keywords are read from `$TURF_ROOT/src/Lexer.cpp` at start-up).
+Port of turflang `scripts/dev/fuzz/crash_fuzz.py`; self-contained (mutators are in
+`mutate.py`, keywords are read from `$TURF_ROOT/src/frontend/Lexer.cpp` at start-up).
 Python 3, stdlib only. Run from anywhere.
 
 ```

@@ -15,7 +15,7 @@ from here; the process tiers (`tier0/`, `oracles/`) cover them.
 
 The token tables and the dictionary (`build/tokens/turf_tokens.inc`,
 `build/tokens/turf.dict`) are generated at build time by `gen_tokens.py` from
-the lexer's keyword table in `src/Lexer.cpp`, so a new keyword is fuzzed with
+the lexer's keyword table in `src/frontend/Lexer.cpp`, so a new keyword is fuzzed with
 no edit here.
 
 ## Build and run

@@ -3,16 +3,16 @@
 Ported from two turflang files, so turf-fuzz never imports from turflang's
 tree at runtime:
 
-  * scripts/fuzz/crash_fuzz.py       token-level operators, tokenizer, vocabularies
-  * scripts/slm_benchmark/mutate.py  the four line-level mutators SLM-001 wrote
-                                     (delete a `;`, swap a type, drop a `}`,
-                                     typo an identifier)
+  * scripts/dev/fuzz/crash_fuzz.py        token-level operators, tokenizer, vocabularies
+  * scripts/slm/slm_benchmark/mutate.py   the four line-level mutators SLM-001 wrote
+                                          (delete a `;`, swap a type, drop a `}`,
+                                          typo an identifier)
 
 Only the mutators were taken; the SLM benchmark's corpus builder is not part
 of fuzzing and stays in turflang.
 
 The keyword list is read from the compiler's own lexer table
-($TURF_ROOT/src/Lexer.cpp), so a keyword added to the language is fuzzed with
+($TURF_ROOT/src/frontend/Lexer.cpp), so a keyword added to the language is fuzzed with
 no edit here.
 """
 from __future__ import annotations
@@ -51,7 +51,7 @@ _FALLBACK_KEYWORDS = ["fn", "struct", "enum", "if", "while", "return", "import",
 def keywords(turf_root: Path) -> list[str]:
     """The lexer's own keyword table (`{"name", TOK_...}` entries)."""
     try:
-        text = (Path(turf_root) / "src" / "Lexer.cpp").read_text()
+        text = (Path(turf_root) / "src" / "frontend" / "Lexer.cpp").read_text()
         words = sorted(set(re.findall(r'\{"([a-z_]+)",\s*TOK_', text)))
         if words:
             return words
@@ -81,7 +81,7 @@ def code_idx(toks) -> list[int]:
     return [i for i, (k, _) in enumerate(toks) if k not in ("ws", "comment")]
 
 
-# ── line-level mutators (SLM-001, scripts/slm_benchmark/mutate.py) ──────────
+# ── line-level mutators (SLM-001, scripts/slm/slm_benchmark/mutate.py) ──────────
 # Each takes (lines, 1-based line, extra) and returns the new line list; some
 # assert a precondition (the caller treats a miss as a no-op).
 def delete_semicolon(lines: list[str], line: int, extra: dict) -> list[str]:

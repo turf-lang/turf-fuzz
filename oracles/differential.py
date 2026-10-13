@@ -81,7 +81,7 @@ _EMIT_OBJ = {}
 
 def emit_obj_supported(turfc=None):
     """Does this turfc take `--emit-obj` (write the object, never link)? It
-    arrived with driver interface 1.6 (turflang src/main.cpp); an older
+    arrived with driver interface 1.6 (turflang src/driver/main.cpp); an older
     compiler, such as one built at an earlier commit to reproduce a finding,
     would reject the flag as a usage error (exit 2)."""
     turfc = turfc or TURFC

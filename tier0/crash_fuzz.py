@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """crash_fuzz.py -- tier 0: black-box crash fuzzing of the TurfLang compiler.
 
-Port of turflang's scripts/fuzz/crash_fuzz.py, with signature dedupe.
+Port of turflang's scripts/dev/fuzz/crash_fuzz.py, with signature dedupe.
 
 The bar: invalid input must produce diagnostics, never a crash.  A compiler
 that exits 0 or 1 on a mutated program has behaved; anything else is a finding:
