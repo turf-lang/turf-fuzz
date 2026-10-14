@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# The weekly process-tier run: the differential oracle (with reduction), the
+# The nightly process-tier run: the differential oracle (with reduction), the
 # soundness oracle and the tier-0 crash fuzzer, against an already built
-# turflang tree. Run by .github/workflows/weekly.yml; runs the same locally.
+# turflang tree. Run by .github/workflows/nightly.yml; runs the same locally.
 #
 #   ci/process.sh            (TURF_ROOT defaults to ../turflang)
 #
 # Environment (all optional):
 #   TURF_ROOT        the built turflang tree (build/turfc, build_asan/turfc)
-#   DIFF_SECONDS     differential oracle budget            (default 2400)
-#   TIER0_SECONDS    tier-0 crash fuzzer budget            (default 900)
+#   DIFF_SECONDS     differential oracle budget            (default 7200)
+#   TIER0_SECONDS    tier-0 crash fuzzer budget            (default 2400)
 #   REDUCE_SECONDS   per new differential finding          (default 150)
 #   JOBS             parallel jobs                         (default: nproc)
-#   SEED             first generator seed (default: from the ISO week, so a
-#                    week's run is reproducible and two weeks never overlap)
+#   SEED             first generator seed (default: from the UTC date, so a
+#                    night's run is reproducible and no two nights overlap)
 #   OUT              where the report goes                 (default ci-out)
 #
 # Only NEW signatures count. A finding whose directory already exists under
@@ -26,11 +26,11 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 2
 ROOT=$(pwd)
 export TURF_ROOT=${TURF_ROOT:-$ROOT/../turflang}
-DIFF_SECONDS=${DIFF_SECONDS:-2400}
-TIER0_SECONDS=${TIER0_SECONDS:-900}
+DIFF_SECONDS=${DIFF_SECONDS:-7200}
+TIER0_SECONDS=${TIER0_SECONDS:-2400}
 REDUCE_SECONDS=${REDUCE_SECONDS:-150}
 JOBS=${JOBS:-$(nproc)}
-SEED=${SEED:-$(( $(date -u +%G) * 100000000 + 10#$(date -u +%V) * 1000000 ))}
+SEED=${SEED:-$(( $(date -u +%Y) * 1000000000 + 10#$(date -u +%j) * 1000000 ))}
 OUT=${OUT:-$ROOT/ci-out}
 rm -rf "$OUT" && mkdir -p "$OUT/findings"
 
@@ -39,7 +39,7 @@ rm -rf "$OUT" && mkdir -p "$OUT/findings"
 ulimit -s 65536 || true
 
 {
-  echo "## turf-fuzz weekly: process tier"
+  echo "## turf-fuzz nightly: process tier"
   echo
   echo "- compiler: \`$(git -C "$TURF_ROOT" rev-parse --short HEAD)\` ($("$TURF_ROOT/build/turfc" --version | head -1)); lock \`$(sed -n 's/^commit = //p' compiler.lock | cut -c1-10)\`"
   echo "- ASan runtime: $([ -x "$TURF_ROOT/build_asan/turfc" ] && echo yes || echo 'no (build_asan/turfc missing)')"

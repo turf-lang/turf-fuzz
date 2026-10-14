@@ -19,8 +19,8 @@ Made by the owner; change them only with the owner.
   reproducer.
 - **One compiler commit under test**, `compiler.lock`. Every finding records
   it, so every finding replays.
-- **CI once a week** (Mondays 00:00 IST). Bulk corpora live in CI artifacts,
-  not in git.
+- **CI every night** (00:00 IST, about three hours of fuzzing a job; owner,
+  2026-10-14, weekly before). Bulk corpora live in CI artifacts, not in git.
 - **Language questions are parked** in `OPEN_QUESTIONS.md` and reviewed with
   the owner at the end of the roadmap, not decided while fuzzing.
 - Decisions found by fuzzing and already made (recorded in turflang's
@@ -44,8 +44,8 @@ Made by the owner; change them only with the owner.
 | `engine/` | tier 4: libFuzzer targets over `turf::analyze()`, the token mutator, the seed corpus script |
 | `triage/` | `signature.py` (stable identity of a compiler failure), `minimize.py` (line delta debugging, same signature required), `findings.py` (one directory per signature) |
 | `findings/` | the tracker, section 5 |
-| `ci/` | the weekly jobs, runnable locally (section 7) |
-| `.github/workflows/weekly.yml` | the weekly workflow |
+| `ci/` | the nightly jobs, runnable locally (section 7) |
+| `.github/workflows/nightly.yml` | the nightly workflow |
 | `corpus/` | reserved for curated seeds; empty. Tier 0 and the engine seed from the turflang tree |
 | `OPEN_QUESTIONS.md` | language decisions found by fuzzing, waiting for the owner |
 | `work/`, `ci-out/` | scratch output, git-ignored |
@@ -244,20 +244,23 @@ library exited the host process), `unsound`, `wrong-message`.
 
 ## 7. CI
 
-`.github/workflows/weekly.yml`, Mondays 00:00 IST (cron `30 18 * * 0`, UTC),
+`.github/workflows/nightly.yml`, every night at 00:00 IST (cron `30 18 * * *`, UTC),
 and on demand (`workflow_dispatch`, with each budget as an input). The logic
 is in `ci/*.sh`, which run the same locally.
 
 | Job | Script | What |
 |---|---|---|
-| `process` (pinned, master) | `ci/process.sh` | differential + reduction (2400 s), soundness, tier 0 (900 s), against the lock and against turflang master |
-| `sanitized` | `ci/sanitized.sh` | tier 0 against the ASan + UBSan compiler from master (2700 s); turflang's former nightly crash fuzz |
-| `engine` | `ci/engine.sh` | `fuzz_analyze_tok` (3600 s), continuing from last week's `engine-corpus` artifact (90 days) |
+| `process` (pinned, master) | `ci/process.sh` | differential + reduction (7200 s), soundness, tier 0 (2400 s), against the lock and against turflang master |
+| `sanitized` | `ci/sanitized.sh` | tier 0 against the ASan + UBSan compiler from master (10800 s); turflang's former nightly crash fuzz |
+| `engine` | `ci/engine.sh` | `fuzz_analyze_tok` (10800 s), continuing from last night's `engine-corpus` artifact (30 days; the first nights fall back to the last `weekly.yml` run's) |
 
-The first seed comes from the ISO week, so a week's run replays and no two
-weeks overlap. Each job writes `ci-out/` (summary, logs, new findings) as an
-artifact and files at most one issue in this repo for new signatures (label
-`fuzz-finding` if it exists). turflang is checked out with the workflow's own
+Each job budgets about three hours of fuzzing, 300 minutes with the build and
+the report (the hosted limit is 360). The first seed comes from the UTC date,
+so a night's run replays and no two nights overlap. Each job writes
+`ci-out/` (summary, logs, new findings) as an artifact (30 days) and `ci/file-issues.sh` files one issue per new signature ("Nightly fuzz: <signature>", shared by the jobs; labels
+`fuzz-finding`, `kind:<class>` and `compiler:<pinned|master|sanitized>`, created when missing, see `ci/labels.sh`); an open issue with that title gets a comment instead, and past 10 new
+issues a job a night the rest go into one overflow issue. The engine's inputs are grouped by kind
+(crash, timeout, oom), one issue each. turflang is checked out with the workflow's own
 token, or `secrets.TURFLANG_TOKEN` if set; the locked commit must be pushed
 to turflang.
 

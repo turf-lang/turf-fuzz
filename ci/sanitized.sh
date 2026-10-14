@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# The weekly sanitized crash fuzz: tier 0 against the compiler built with
+# The nightly sanitized crash fuzz: tier 0 against the compiler built with
 # ASan + UBSan (TURF_SANITIZE_COMPILER=ON, in build_san/), so a memory error
 # in a compiler pass is a finding even when the plain build survives it by
 # luck. Took over turflang's nightly 45-minute run (owner, 2026-10-12);
 # turflang keeps a three-minute pass per push. Run by
-# .github/workflows/weekly.yml; runs the same locally.
+# .github/workflows/nightly.yml; runs the same locally.
 #
 #   ci/sanitized.sh          (TURF_ROOT defaults to ../turflang)
 #
 # Environment (all optional):
 #   TURF_ROOT          the turflang tree with build_san/turfc
-#   SANITIZED_SECONDS  fuzzing budget                  (default 2700)
+#   SANITIZED_SECONDS  fuzzing budget                  (default 10800)
 #   JOBS               parallel compiles               (default: nproc)
-#   SEED               default: from the ISO week, as ci/process.sh
+#   SEED               default: from the UTC date, as ci/process.sh
 #   OUT                report directory                (default ci-out)
 #
 # New signatures (directories not yet under findings/) go to
@@ -21,9 +21,9 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 2
 ROOT=$(pwd)
 export TURF_ROOT=${TURF_ROOT:-$ROOT/../turflang}
-SANITIZED_SECONDS=${SANITIZED_SECONDS:-2700}
+SANITIZED_SECONDS=${SANITIZED_SECONDS:-10800}
 JOBS=${JOBS:-$(nproc)}
-SEED=${SEED:-$(( $(date -u +%G) * 100000000 + 10#$(date -u +%V) * 1000000 + 500000 ))}
+SEED=${SEED:-$(( $(date -u +%Y) * 1000000000 + 10#$(date -u +%j) * 1000000 + 500000 ))}
 OUT=${OUT:-$ROOT/ci-out}
 TURFC=$TURF_ROOT/build_san/turfc
 rm -rf "$OUT" && mkdir -p "$OUT/findings"
@@ -42,7 +42,7 @@ while read -r d; do
 done < "$OUT/new-findings.txt"
 n=$(wc -l < "$OUT/new-findings.txt")
 {
-  echo "## turf-fuzz weekly: sanitized crash fuzz"
+  echo "## turf-fuzz nightly: sanitized crash fuzz"
   echo
   echo "- compiler: \`$(git -C "$TURF_ROOT" rev-parse --short HEAD)\`, ASan + UBSan build; first seed $SEED"
   grep -E "^fuzz: [0-9]+ compiles in" "$OUT/sanitized.log" | sed 's/^/- /'

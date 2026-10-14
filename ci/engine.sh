@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
-# The weekly libFuzzer run (engine/, structure-aware target), continuing from
-# last week's corpus when there is one. Run by .github/workflows/weekly.yml.
+# The nightly libFuzzer run (engine/, structure-aware target), continuing from
+# last night's corpus when there is one. Run by .github/workflows/nightly.yml.
 #
 #   ci/engine.sh             (needs engine/build from cmake, see engine/README.md)
 #
 # Environment (all optional):
-#   ENGINE_SECONDS   fuzzing budget                         (default 3600)
+#   ENGINE_SECONDS   fuzzing budget                         (default 10800)
 #   FORKS            libFuzzer -fork                         (default: nproc)
-#   CORPUS_IN        last week's corpus directory, if restored (default: none,
+#   CORPUS_IN        last night's corpus directory, if restored (default: none,
 #                    start from engine/seed_corpus.sh's merged seeds)
 #   OUT              report directory                         (default ci-out)
 #
 # Writes $OUT/engine-corpus (the grown corpus, merged down to what adds
-# coverage: next week's CORPUS_IN), $OUT/engine-artifacts (any crash, leak
+# coverage: tomorrow's CORPUS_IN), $OUT/engine-artifacts (any crash, leak
 # excluded, timeout or OOM input) and appends to $OUT/summary.md.
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 2
 ROOT=$(pwd)
-ENGINE_SECONDS=${ENGINE_SECONDS:-3600}
+ENGINE_SECONDS=${ENGINE_SECONDS:-10800}
 FORKS=${FORKS:-$(nproc)}
 OUT=${OUT:-$ROOT/ci-out}
 BIN=$ROOT/engine/build/fuzz_analyze_tok
@@ -33,7 +33,7 @@ work=$(mktemp -d)
 mkdir -p "$work/corpus" "$work/artifacts"
 if [ -n "${CORPUS_IN:-}" ] && [ -d "$CORPUS_IN" ] && [ -n "$(ls -A "$CORPUS_IN")" ]; then
   cp "$CORPUS_IN"/* "$work/corpus/"
-  from="last week's corpus ($(ls "$CORPUS_IN" | wc -l) files)"
+  from="last night's corpus ($(ls "$CORPUS_IN" | wc -l) files)"
 else
   engine/seed_corpus.sh "${TURF_ROOT:-$ROOT/../turflang}" "$ROOT/engine/build/fuzz_analyze" > "$OUT/engine-seeds.log" 2>&1
   cp work/engine/seeds/* "$work/corpus/"
@@ -47,7 +47,7 @@ echo "== libFuzzer, ${ENGINE_SECONDS}s, $FORKS forks, from $from"
   -artifact_prefix="$work/artifacts/" "$work/corpus" > "$OUT/engine.log" 2>&1
 last=$(grep -oE 'cov: [0-9]+ ft: [0-9]+ corp: [0-9]+' "$OUT/engine.log" | tail -1)
 
-# Keep next week's input small: only the files that add coverage.
+# Keep tomorrow's input small: only the files that add coverage.
 rm -rf "$OUT/engine-corpus" && mkdir -p "$OUT/engine-corpus"
 "$BIN" -merge=1 -max_len=16384 -detect_leaks=0 -artifact_prefix="$work/artifacts/" \
   "$OUT/engine-corpus" "$work/corpus" > "$OUT/engine-merge.log" 2>&1
@@ -56,10 +56,10 @@ cp "$work/artifacts"/* "$OUT/engine-artifacts/" 2>/dev/null || true
 n=$(ls "$OUT/engine-artifacts" | wc -l)
 {
   echo
-  echo "## turf-fuzz weekly: libFuzzer (fuzz_analyze_tok)"
+  echo "## turf-fuzz nightly: libFuzzer (fuzz_analyze_tok)"
   echo
   echo "- from $from; ${ENGINE_SECONDS}s, $FORKS forks: $last"
-  echo "- corpus kept for next week: $(ls "$OUT/engine-corpus" | wc -l) files"
+  echo "- corpus kept for tomorrow: $(ls "$OUT/engine-corpus" | wc -l) files"
   echo "- **$n crash/timeout/OOM input(s)**$([ "$n" -gt 0 ] && echo ": $(ls "$OUT/engine-artifacts" | tr '\n' ' ')")"
 } >> "$OUT/summary.md"
 echo "$n" > "$OUT/engine-artifact-count.txt"

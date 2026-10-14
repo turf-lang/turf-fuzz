@@ -1,6 +1,11 @@
-name: Weekly fuzzing
-# turf-fuzz item 7. Once a week, by the owner's decision (2026-10-12): the
-# fuzzing tiers cost hours, and turflang's own CI never depends on this repo.
+name: Nightly fuzzing
+# turf-fuzz item 7. Every night, by the owner's decision (2026-10-14: nightly,
+# 00:00 IST, about three hours; it was weekly, Mondays 00:00 IST, since
+# 2026-10-12): the fuzzing tiers cost hours, and turflang's own CI never
+# depends on this repo. Each job budgets about three hours of fuzzing
+# wall-clock, so a job (build and report included) ends in under five and
+# the 6 h job limit is never in play; the matrix and the other jobs run side
+# by side.
 #
 #   process (pinned)  the compiler at compiler.lock: reproducible, every
 #                     finding replays with the lock as recorded
@@ -8,43 +13,51 @@ name: Weekly fuzzing
 #   sanitized         tier 0 against the ASan + UBSan compiler from master
 #                     (turflang's former nightly crash fuzz)
 #   engine            libFuzzer over the front end at the lock, continuing
-#                     from last week's corpus (kept as an artifact)
+#                     from last night's corpus (kept as an artifact)
 #
 # Only new signatures are filed: a finding whose directory is already under
-# findings/ (committed) just bumps its counter. Each job files at most one
-# issue in this repository, carrying the new findings; the reports, findings
-# and corpus are artifacts. The logic is in ci/*.sh, runnable locally.
+# findings/ (committed) just bumps its counter. ci/file-issues.sh files one
+# issue per new signature, titled "Nightly fuzz: <signature>" (shared by the
+# jobs, so pinned and master find one issue). If an open issue has exactly
+# that title it gets a comment (job, date, run, compiler)
+# instead, so a finding not yet committed is not filed again every night. At
+# most 10 new issues per job per night; the rest go into one overflow issue.
+# The engine's inputs have no signature (a bug comes back under a new hash),
+# so they are grouped by kind (crash, timeout, oom): one issue per kind, with
+# the same comment-if-open rule. Each issue is labelled fuzz-finding,
+# kind:<class> (ice, crash, miscompile, ...) and compiler:<pinned, master or
+# sanitized>; missing labels are created (ci/labels.sh). The reports, findings and corpus are
+# artifacts. The logic is in ci/*.sh, runnable locally.
 #
 # turflang is public, so this workflow's own token checks it out. Should it
 # go private, add a repository secret TURFLANG_TOKEN (read access to
 # turf-lang/turf-lang's contents) and it is used instead. The pinned commit
-# must have been pushed to turflang. Issues get the label `fuzz-finding` if
-# it exists, and none otherwise.
+# must have been pushed to turflang.
 on:
   schedule:
-    # Monday 00:00 IST, the midnight between Sunday and Monday (owner,
-    # 2026-10-12). Cron is in UTC: Sunday 18:30.
-    - cron: "30 18 * * 0"
+    # Every day at 00:00 IST (owner, 2026-10-14; weekly on Mondays before).
+    # Cron is in UTC: 18:30 the day before.
+    - cron: "30 18 * * *"
   workflow_dispatch:
     inputs:
       diff_seconds:
         description: "Differential oracle budget per compiler (seconds)"
-        default: "2400"
+        default: "7200"
       tier0_seconds:
         description: "Tier-0 crash fuzzer budget per compiler (seconds)"
-        default: "900"
+        default: "2400"
       engine_seconds:
         description: "libFuzzer budget (seconds)"
-        default: "3600"
+        default: "10800"
       sanitized_seconds:
         description: "Sanitized tier-0 crash fuzz budget (seconds)"
-        default: "2700"
+        default: "10800"
 permissions:
   contents: read
   issues: write
   actions: read
 concurrency:
-  group: weekly-fuzz
+  group: nightly-fuzz
   cancel-in-progress: false
 
 jobs:
@@ -54,7 +67,7 @@ jobs:
       matrix:
         compiler: [pinned, master]
     runs-on: ubuntu-latest
-    timeout-minutes: 200
+    timeout-minutes: 300
     steps:
       - uses: actions/checkout@v4
         with:
@@ -115,8 +128,8 @@ jobs:
       - name: Fuzz (differential + reduction, soundness, tier 0)
         env:
           TURF_ROOT: ${{ github.workspace }}/turflang
-          DIFF_SECONDS: ${{ github.event.inputs.diff_seconds || '2400' }}
-          TIER0_SECONDS: ${{ github.event.inputs.tier0_seconds || '900' }}
+          DIFF_SECONDS: ${{ github.event.inputs.diff_seconds || '7200' }}
+          TIER0_SECONDS: ${{ github.event.inputs.tier0_seconds || '2400' }}
           OUT: ${{ github.workspace }}/ci-out
         run: |
           turf-fuzz/ci/process.sh
@@ -125,32 +138,18 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: weekly-process-${{ matrix.compiler }}
+          name: nightly-process-${{ matrix.compiler }}
           path: ci-out/
-          retention-days: 90
-      - name: File an issue for new signatures
+          retention-days: 30
+      - name: File issues for new signatures
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          n=$(wc -l < ci-out/new-findings.txt); s=$(wc -l < ci-out/soundness.txt)
-          [ "$n" -gt 0 ] || [ "$s" -gt 0 ] || exit 0
-          {
-            echo "Weekly fuzz against the **${{ matrix.compiler }}** compiler found $n new signature(s) and $s soundness failure(s) (run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}; artifact \`weekly-process-${{ matrix.compiler }}\`)."
-            echo
-            echo "Presume a generator or evaluator bug first for a wrong answer (\`gen/trace.py SEED\`). A real compiler bug gets a fix and a pinned test in turflang, and its directory committed under findings/."
-            echo
-            cat ci-out/summary.md
-            for d in $(cat ci-out/new-findings.txt); do
-              echo
-              echo "### \`$d\`"
-              [ -f "ci-out/findings/$d/meta.json" ] && { echo '```json'; head -c 1500 "ci-out/findings/$d/meta.json"; echo; echo '```'; }
-              f="ci-out/findings/$d/min.tr"; [ -f "$f" ] || f="ci-out/findings/$d/prog.tr"; [ -f "$f" ] || f="ci-out/findings/$d/input.tr"
-              [ -f "$f" ] && { echo '```turf'; head -c 3000 "$f"; echo; echo '```'; }
-            done
-          } > issue-body.md
-          title="Weekly fuzz (${{ matrix.compiler }}): $n new signature(s), $s soundness failure(s) ($(date -u +%F))"
-          gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file issue-body.md --label fuzz-finding \
-          || gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file issue-body.md
+          # A soundness failure is keyed by verdict and case, not its detail text,
+          # which can differ night to night.
+          { cat ci-out/new-findings.txt; awk '{print "soundness/" $1 "/" $2}' ci-out/soundness.txt; } > ci-out/items.txt
+          COMPILER_SHA=$(git -C turflang rev-parse HEAD) turf-fuzz/ci/file-issues.sh \
+            "process/${{ matrix.compiler }}" ci-out/items.txt "nightly-process-${{ matrix.compiler }}"
 
   # turflang's nightly crash fuzz, moved here (owner, 2026-10-12): tier 0
   # against the compiler built with ASan + UBSan from turflang's master, so a
@@ -158,7 +157,7 @@ jobs:
   # survives it. turflang keeps a three-minute pass per push.
   sanitized:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 300
     steps:
       - uses: actions/checkout@v4
         with:
@@ -205,7 +204,7 @@ jobs:
       - name: Fuzz
         env:
           TURF_ROOT: ${{ github.workspace }}/turflang
-          SANITIZED_SECONDS: ${{ github.event.inputs.sanitized_seconds || '2700' }}
+          SANITIZED_SECONDS: ${{ github.event.inputs.sanitized_seconds || '10800' }}
           OUT: ${{ github.workspace }}/ci-out
         run: |
           turf-fuzz/ci/sanitized.sh
@@ -214,34 +213,19 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: weekly-sanitized
+          name: nightly-sanitized
           path: ci-out/
-          retention-days: 90
-      - name: File an issue for new signatures
+          retention-days: 30
+      - name: File issues for new signatures
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          n=$(wc -l < ci-out/new-findings.txt)
-          [ "$n" -gt 0 ] || exit 0
-          {
-            echo "The weekly sanitized crash fuzz (turflang master, ASan + UBSan compiler) found $n new signature(s) (run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}; artifact \`weekly-sanitized\`). A compiler bug gets a fix and its minimized program as a pinned \`fail_*\` test in turflang."
-            echo
-            cat ci-out/summary.md
-            for d in $(cat ci-out/new-findings.txt); do
-              echo
-              echo "### \`$d\`"
-              f="ci-out/findings/$d/min.tr"; [ -f "$f" ] || f="ci-out/findings/$d/input.tr"
-              [ -f "ci-out/findings/$d/report.md" ] && head -c 2000 "ci-out/findings/$d/report.md"
-              [ -f "$f" ] && { echo; echo '```turf'; head -c 3000 "$f"; echo; echo '```'; }
-            done
-          } > issue-body.md
-          title="Weekly fuzz (sanitized): $n new signature(s) ($(date -u +%F))"
-          gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file issue-body.md --label fuzz-finding \
-          || gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file issue-body.md
+          COMPILER_SHA=$(git -C turflang rev-parse HEAD) turf-fuzz/ci/file-issues.sh \
+            sanitized ci-out/new-findings.txt nightly-sanitized
 
   engine:
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 300
     steps:
       - uses: actions/checkout@v4
         with:
@@ -287,21 +271,28 @@ jobs:
           CC=clang-22 CXX=clang++-22 cmake -S turf-fuzz/engine -B turf-fuzz/engine/build -G Ninja \
             -DTURF_ROOT="$GITHUB_WORKSPACE/turflang"
           cmake --build turf-fuzz/engine/build -j "$(nproc)" --target fuzz_analyze fuzz_analyze_tok
-      - name: Restore last week's corpus
+      # The latest successful run that left an engine-corpus artifact:
+      # nightly.yml first, then weekly.yml (the workflow this one replaced),
+      # so the first nights start from the existing corpus, not the seeds.
+      - name: Restore last night's corpus
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow weekly.yml --status success \
-                 --limit 1 --json databaseId -q '.[0].databaseId' || true)
           mkdir -p prev-corpus
-          if [ -n "$id" ]; then
-            gh run download "$id" --repo "$GITHUB_REPOSITORY" --name engine-corpus --dir prev-corpus \
-              || echo "no engine-corpus artifact in run $id: starting from the seeds"
-          fi
+          for wf in nightly.yml weekly.yml; do
+            id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$wf" --status success \
+                   --limit 1 --json databaseId -q '.[0].databaseId' || true)
+            [ -n "$id" ] || continue
+            if gh run download "$id" --repo "$GITHUB_REPOSITORY" --name engine-corpus --dir prev-corpus; then
+              echo "corpus from $wf run $id"
+              break
+            fi
+            echo "no engine-corpus artifact in $wf run $id"
+          done
       - name: Fuzz
         env:
           TURF_ROOT: ${{ github.workspace }}/turflang
-          ENGINE_SECONDS: ${{ github.event.inputs.engine_seconds || '3600' }}
+          ENGINE_SECONDS: ${{ github.event.inputs.engine_seconds || '10800' }}
           CORPUS_IN: ${{ github.workspace }}/prev-corpus
           OUT: ${{ github.workspace }}/ci-out
         run: |
@@ -313,28 +304,50 @@ jobs:
         with:
           name: engine-corpus
           path: ci-out/engine-corpus/
-          retention-days: 90
+          retention-days: 30
       - name: Upload the report and crash inputs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: weekly-engine
+          name: nightly-engine
           path: |
             ci-out/summary.md
             ci-out/engine*.log
             ci-out/engine-artifacts/
-          retention-days: 90
-      - name: File an issue for crash inputs
+          retention-days: 30
+      # libFuzzer inputs have no signature, and the same bug is found under a
+      # new hash every night, so they are grouped by the kind in the file name
+      # (crash-, timeout-, oom-): one issue per kind, an open one is commented
+      # on, not filed again. At most three issues a night, so no cap is needed.
+      - name: File issues for crash inputs
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          n=$(cat ci-out/engine-artifact-count.txt 2>/dev/null || echo 0)
-          [ "$n" -gt 0 ] || exit 0
-          {
-            echo "The weekly libFuzzer run found $n input(s) the front end crashed, hung or ran out of memory on (run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}; artifact \`weekly-engine\`). Replay one with \`engine/build/fuzz_analyze FILE\` (with \`ulimit -s 65536\`) and triage it into findings/."
-            echo
-            cat ci-out/summary.md
-          } > issue-body.md
-          title="Weekly fuzz (engine): $n crash input(s) ($(date -u +%F))"
-          gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file issue-body.md --label fuzz-finding \
-          || gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file issue-body.md
+          run="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          sha=$(git -C turflang rev-parse HEAD)
+          . turf-fuzz/ci/labels.sh
+          for kind in crash timeout oom; do
+            files=$(ls ci-out/engine-artifacts 2>/dev/null | grep "^$kind-" || true)
+            [ -n "$files" ] || continue
+            n=$(echo "$files" | wc -l)
+            title="Nightly fuzz (engine): $kind inputs"
+            num=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit 100 --search "\"$title\" in:title" \
+                    --json number,title | jq -r --arg t "$title" 'map(select(.title == $t)) | .[0].number // empty')
+            if [ -n "$num" ]; then
+              gh issue comment "$num" --repo "$GITHUB_REPOSITORY" \
+                --body "Seen again $(date -u +%F): $n $kind input(s) in $run (turflang \`$sha\`, artifact \`nightly-engine\`)."
+              continue
+            fi
+            {
+              echo "The nightly libFuzzer run found $n input(s) the front end ended in a $kind on (run $run, turflang \`$sha\`, artifact \`nightly-engine\`). Replay one with \`engine/build/fuzz_analyze FILE\` (with \`ulimit -s 65536\`) and triage it into findings/."
+              echo
+              echo "$files" | sed 's/^/- `/; s/$/`/'
+              echo
+              echo '```turf'; head -c 3000 "ci-out/engine-artifacts/$(echo "$files" | head -1)"; echo; echo '```'
+              echo
+              cat ci-out/summary.md
+            } > issue-body.md
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file issue-body.md \
+              --label "$(labels_for "engine-$kind/" engine)" \
+            || gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file issue-body.md
+          done

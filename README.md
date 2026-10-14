@@ -23,7 +23,7 @@ Never discard a minimized reproducer.
 | `engine/` | libFuzzer in-process targets over `include/turf/Analysis.h` (C++, clang); see `engine/README.md` |
 | `triage/` | signature bucketing, line minimization, findings directories |
 | `findings/` | one directory per bug: reproducer, minimized input, report. Committed = known |
-| `ci/` | the weekly CI run (`.github/workflows/weekly.yml`, Mondays 00:00 IST): `process.sh`, `sanitized.sh`, `engine.sh` |
+| `ci/` | the nightly CI run (`.github/workflows/nightly.yml`, 00:00 IST, about three hours a job): `process.sh`, `sanitized.sh`, `engine.sh` |
 | `OPEN_QUESTIONS.md` | language decisions found by fuzzing, parked for the owner |
 | `corpus/` | reserved for curated seeds (empty: seeds come from the turflang tree; bulk corpora are CI artifacts) |
 
