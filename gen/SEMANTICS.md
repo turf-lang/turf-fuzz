@@ -226,7 +226,7 @@ keys outside that domain) grows a `double`/`Kp` table past 128 slots.
 
 | Rule | Source |
 |---|---|
-| `io::printline(int)` prints `%lld` and `\n`; `io::printline(bool)` prints `1` or `0`. | doc `docs/reference/stdlib/io_and_net.md`; probe |
+| `io::printline(int)` prints `%lld` and `\n`; `io::printline(bool)` prints `true` or `false`, the text of `(b to string)`. | turflang 05fd9cf (before it: `1` or `0`); `lib/std/core/io.tr` |
 | stdout is buffered and a trap `abort()`s, losing unflushed output, so the generator emits `io::flush();` after every `printline`. | probe; `runtime/turfrt_panic.c` |
 | A runtime check writes `panic: runtime check: <text> (<file>:<line>)` to stderr and aborts (SIGABRT). `<line>` is the line of the statement (or `elseif` branch) containing the faulting expression; a trap inside a helper or method reports the line there. The stdlib panics above have their own shapes; `oracles/differential.py` parses both. | probe; `runtime/turfrt_panic.c` |
 | `main` returning `v` exits with `v & 0xFF`. | probe |

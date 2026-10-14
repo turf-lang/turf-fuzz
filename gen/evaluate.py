@@ -749,8 +749,9 @@ class _Machine:
                 self.out.append(fmt_double(v) + "\n")
             else:
                 if isinstance(v, bool):
-                    v = 1 if v else 0
-                self.out.append("%d\n" % v)
+                    self.out.append(("true" if v else "false") + "\n")
+                else:
+                    self.out.append("%d\n" % v)
         elif isinstance(s, MethodCall):
             args = [self.ev(a, env) for a in s.args]  # arguments, then receiver
             recv = self.target(s.recv, env)
