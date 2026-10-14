@@ -23,6 +23,9 @@ PREC = {
     "+": 40, "-": 40,
     "*": 50, "/": 50, "%": 50,
 }
+# `to` sits between comparison and the bitwise operators (turflang a71be88):
+# `a < x to int` is `a < (x to int)`, and `a + b to int` is `(a + b) to int`.
+PREC_TO = 31
 PREC_UNARY = 70
 PREC_ATOM = 100
 
@@ -813,6 +816,12 @@ def _prec(e):
     return PREC_ATOM
 
 
+# The casts whose target is a built-in type: `x to int < n` is a comparison
+# (turflang bea3c59). A cast to a user type (`EnumOf`, `RefCast`) stays in
+# parentheses, where a following `<` would open type arguments.
+_BARE_CASTS = (Conv, ToStr, CharAt, EnumTo)
+
+
 def walk_stmts(stmts):
     """Every statement in stmts, nested bodies included."""
     for s in stmts:
@@ -897,11 +906,23 @@ class _Renderer:
         self.p = program
         self.rng = random.Random(program.seed ^ 0x5EED)
         self.lines = []
+        # Its own stream, so choosing bare casts never moves the `rand` mode's
+        # parenthesis draws.
+        self.rng_to = random.Random(program.seed ^ 0x70)
+        self._bare = False
 
     # -- expressions
     def expr(self, e, parent_prec=0, right=False):
+        # A cast to a built-in type is written without its parentheses where it
+        # is an operand of a binary operator (never `full` mode). Only then
+        # does it need a precedence of its own; the operator's rule decides if
+        # it must be parenthesized again (`(x to int) + 1`).
+        bare = (isinstance(e, _BARE_CASTS) and parent_prec > 0
+                and (self.p.paren_mode == "min"
+                     or (self.p.paren_mode == "rand" and self.rng_to.random() < 0.5)))
+        self._bare = bare
         s = self._expr(e)
-        p = _prec(e)
+        p = PREC_TO if bare else _prec(e)
         need = p < parent_prec or (p == parent_prec and right and parent_prec < PREC_UNARY)
         if parent_prec > 0 and not need:
             mode = self.p.paren_mode
@@ -915,7 +936,14 @@ class _Renderer:
             return "(" + s + ")"
         return s
 
+    def _cast(self, e, ty, bare):
+        """`(e to ty)`, or `e to ty` for a cast the caller found bare-safe."""
+        if bare:
+            return "%s to %s" % (self.expr(e, PREC_TO), ty)
+        return "(%s to %s)" % (self.expr(e, PREC_ATOM), ty)
+
     def _expr(self, e):
+        bare, self._bare = self._bare, False
         if isinstance(e, Lit):
             return str(e.v)
         if isinstance(e, BLit):
@@ -971,21 +999,22 @@ class _Renderer:
         if isinstance(e, KpKey):
             return "kp(%s, %s)" % (self.expr(e.c), self.expr(e.n))
         if isinstance(e, Conv):
-            return "(%s to %s)" % (self.expr(e.e, PREC_ATOM), e.to)
+            return self._cast(e.e, e.to, bare)
         if isinstance(e, SLit):
             return '"%s"' % e.v.replace("\t", "\\t").replace("\n", "\\n")
         if isinstance(e, SCall):
             return "strings::%s(%s)" % (e.fn, ", ".join(self.expr(a) for a in e.args))
         if isinstance(e, ToStr):
-            return "(%s to string)" % self.expr(e.e, PREC_ATOM)
+            return self._cast(e.e, "string", bare)
         if isinstance(e, CharAt):
-            return "(%s[%s] to int)" % (self.expr(e.base, PREC_ATOM), self.expr(e.idx))
+            s = "%s[%s] to int" % (self.expr(e.base, PREC_ATOM), self.expr(e.idx))
+            return s if bare else "(%s)" % s
         if isinstance(e, EnumLit):
             return "%s::%s" % (e.ty.name, e.ty.variants[e.k])
         if isinstance(e, EnumOf):
             return "(%s to %s)" % (self.expr(e.e, PREC_ATOM), e.ty.name)
         if isinstance(e, EnumTo):
-            return "(%s to %s)" % (self.expr(e.e, PREC_ATOM), e.to)
+            return self._cast(e.e, e.to, bare)
         if isinstance(e, EnumCount):
             return "%s::COUNT" % e.enum.name
         if isinstance(e, ErrLit):
