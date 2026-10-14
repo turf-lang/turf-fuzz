@@ -43,6 +43,10 @@ sys.path.insert(0, os.path.join(ROOT, "gen"))
 import generate  # noqa: E402
 
 TURF_ROOT = os.environ.get("TURF_ROOT") or os.path.join(os.path.dirname(ROOT), "turflang")
+# A TURF_HOME in the environment replaces the compiler's install root, so every
+# compile would read another tree's lib/std ("Could not find module 'int'" on a
+# stale one). The compiler under test finds its own, next to build/.
+os.environ.pop("TURF_HOME", None)
 TURFC = os.environ.get("TURFC") or os.path.join(TURF_ROOT, "build", "turfc")
 
 # A second compiler, built with -DTURF_RT_SANITIZE=ON in build_asan/: the same

@@ -110,6 +110,7 @@ def split_trace(text):
 
 
 def main():
+    os.environ.pop("TURF_HOME", None)  # the compiler under test finds its own lib/std
     ap = argparse.ArgumentParser()
     ap.add_argument("seed", type=int)
     ap.add_argument("--turfc", default=os.environ.get("TURFC") or os.path.join(

@@ -66,6 +66,11 @@ OPTS = ["-O0", "-O1", "-O2", "-O3", "-Os", "-g"]
 ASAN_STACK_MB = 65536 // 1024  # ASan frames overflow 8 MB before the parser's nesting cap
 
 
+# A TURF_HOME in the environment replaces the compiler's install root (see
+# oracles/differential.py): the compiler under test must find its own lib/std.
+os.environ.pop("TURF_HOME", None)
+
+
 def turf_root() -> Path:
     return Path(os.environ.get("TURF_ROOT") or ROOT.parent / "turflang").resolve()
 
