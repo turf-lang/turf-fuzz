@@ -33,6 +33,10 @@ name: Nightly fuzzing
 # go private, add a repository secret TURFLANG_TOKEN (read access to
 # turf-lang/turf-lang's contents) and it is used instead. The pinned commit
 # must have been pushed to turflang.
+#
+# Issues and labels are made as the org's GitHub App, turflang[bot], when
+# the variable TURF_BOT_CLIENT_ID and the secret TURF_BOT_PRIVATE_KEY are
+# set (Issues: read and write), and as github-actions[bot] otherwise.
 on:
   schedule:
     # Every day at 00:00 IST (owner, 2026-10-14; weekly on Mondays before).
@@ -141,9 +145,21 @@ jobs:
           name: nightly-process-${{ matrix.compiler }}
           path: ci-out/
           retention-days: 30
+      # Issues are filed as the turf-lang org's GitHub App (turflang[bot]) when
+      # the org has set it up: variable TURF_BOT_CLIENT_ID, secret
+      # TURF_BOT_PRIVATE_KEY. Without them, or if the token cannot be made, as
+      # github-actions[bot].
+      - name: The bot's token
+        id: bot
+        if: vars.TURF_BOT_CLIENT_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.TURF_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.TURF_BOT_PRIVATE_KEY }}
       - name: File issues for new signatures
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.bot.outputs.token || github.token }}
         run: |
           # A soundness failure is keyed by verdict and case, not its detail text,
           # which can differ night to night.
@@ -216,9 +232,21 @@ jobs:
           name: nightly-sanitized
           path: ci-out/
           retention-days: 30
+      # Issues are filed as the turf-lang org's GitHub App (turflang[bot]) when
+      # the org has set it up: variable TURF_BOT_CLIENT_ID, secret
+      # TURF_BOT_PRIVATE_KEY. Without them, or if the token cannot be made, as
+      # github-actions[bot].
+      - name: The bot's token
+        id: bot
+        if: vars.TURF_BOT_CLIENT_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.TURF_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.TURF_BOT_PRIVATE_KEY }}
       - name: File issues for new signatures
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.bot.outputs.token || github.token }}
         run: |
           COMPILER_SHA=$(git -C turflang rev-parse HEAD) turf-fuzz/ci/file-issues.sh \
             sanitized ci-out/new-findings.txt nightly-sanitized
@@ -319,9 +347,21 @@ jobs:
       # new hash every night, so they are grouped by the kind in the file name
       # (crash-, timeout-, oom-): one issue per kind, an open one is commented
       # on, not filed again. At most three issues a night, so no cap is needed.
+      # Issues are filed as the turf-lang org's GitHub App (turflang[bot]) when
+      # the org has set it up: variable TURF_BOT_CLIENT_ID, secret
+      # TURF_BOT_PRIVATE_KEY. Without them, or if the token cannot be made, as
+      # github-actions[bot].
+      - name: The bot's token
+        id: bot
+        if: vars.TURF_BOT_CLIENT_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.TURF_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.TURF_BOT_PRIVATE_KEY }}
       - name: File issues for crash inputs
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.bot.outputs.token || github.token }}
         run: |
           run="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           sha=$(git -C turflang rev-parse HEAD)
