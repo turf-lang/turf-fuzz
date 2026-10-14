@@ -1,0 +1,12 @@
+import io;
+
+fn main(): int {
+    mut x: int = 0;
+    if x == 0 {
+        x = -9223372036854775808;
+    } else {
+        x = -7;
+    }
+    io::printline(x);
+    return 0;
+}

@@ -1,0 +1,124 @@
+// turf-fuzz gen: seed=1072 paren=full
+import io;
+import list::List;
+
+struct S0 { f0: int, f1: int, f2: int }
+
+struct S1 { f0: int, f1: S0, f2: int, f3: S0[3] }
+
+fn S0.m0(): void {
+    if true {
+    }
+    if !(false && (54 <= self.f1)) || ((false give false otherwise (self.f0 >= 42) && true)) {
+        io::printline(self.f1);
+        io::flush();
+    } elseif ((true == true) && ((-6 <= -40974) || (6 >= -53))) && ((-3 * -5) <= (self.f1 + -9223372036854775807)) {
+        mut v1: int = 9223372036854775807 / -1;
+        self.f1 = ((v1 == v1 give v1 otherwise self.f1 * v1)) * ((v1 + v1) - (v1 / ((self.f0 % 7) + 8)));
+    } elseif 38 <= ((-2147483648 == -70 give -9223372036854775808 otherwise -7)) {
+        io::printline(6 + -36);
+        io::flush();
+    } else {
+        if false {
+            io::printline(-7);
+            io::flush();
+            mut v2: int = -9;
+            v2 = v2;
+        } else {
+            io::printline(-6);
+            io::flush();
+            io::printline(false);
+            io::flush();
+        }
+        if -88918 < -7 {
+            io::printline(-9);
+            io::flush();
+            io::printline(-66);
+            io::flush();
+            io::printline(-(35255 % ((9223372036854775806 % 7) + 8)) - (8 + (1 / ((99282 % 7) + 8))));
+            io::flush();
+        } else {
+        }
+    }
+    io::printline(((-5 - self.f1) + (self.f2 * 9)) * - -1);
+    io::flush();
+}
+
+fn S1.m0(p0: bool): void {
+    io::printline(self.f3[-3 % 3].f1 < -((9223372036854775806 != self.f3[-3].f2 give self.f1.f1 otherwise 3037000499)));
+    io::flush();
+}
+
+fn f0(p0: int, p1: S1): int {
+    mut chk: int = 0;
+    mut v1: bool = false;
+    mut v2: bool = false;
+    mut v3: int = 37;
+    mut s1: S0 = p1.f1;
+    mut s2: S0 = s1;
+    v1 = ((-2 / ((p0 % 7) + 8)) - (v3 + v3)) < -(-7 * -29933);
+    return 64;
+}
+
+fn main(): int {
+    mut chk: int = 0;
+    mut v1: int = -69;
+    mut v2: int = -96;
+    mut v3: int = -56;
+    mut v4: int = -35222;
+    mut s1: S1 = S1::default();
+    v1 = -(v3 - ((false give v4 otherwise -97806)));
+    chk = ((chk * 31) + ((v1 * ((v1 + v3) - s1.f3[-1].f0)) % 1000003)) % 1000000007;
+    mut c1: int = 0;
+    while c1 < 3 {
+        c1 += 1;
+        if ((c1 + 2147483647) - (v4 + v4)) < ((v1 * v4) % ((f0(c1, s1) % 7) + 8)) {
+            chk = ((chk * 31) + ((s1.f3[v4 % 3].f0 + ((v4 + v4) + ((-48 <= 7 give c1 otherwise 9)))) % 1000003)) % 1000000007;
+            s1.f1.m0();
+        } elseif false {
+            if ((false give false otherwise v2 >= v4) give (v2 <= v1 give c1 > c1 otherwise c1 == v3) otherwise true) {
+                continue;
+            }
+            v3 = (f0(v2, S1::default()) * v3) - v1;
+            if v2 == (6 + ((false give v2 otherwise v4))) {
+                v1 %= -3;
+                v1 = -(v2 % ((v1 % 7) + 8)) - f0(v3, S1::default());
+            } elseif true {
+                mut v5: bool = !(c1 <= 6) != (!(c1 == s1.f3[2].f1) != true);
+                mut l1: List<int> = List::default();
+            }
+        }
+    }
+    if !(v1 == v4) != true {
+    } elseif v2 <= (v3 / (((v4 * v2) % 7) + 8)) {
+        io::printline((true && ((9223372036854775806 < v4 give true otherwise c1 > c1)) give false otherwise (v1 / 1000) >= (v2 + v1)));
+        io::flush();
+        if (!(v4 == v2) && (v3 <= v1)) || ((v3 == v1) && (c1 != v2)) {
+            mut v6: int = -((v3 / 1) / 5);
+        }
+        mut c2: int = 0;
+        while c2 < 2 {
+            c2 = c2 + 1;
+            v2++;
+            v3 = c2 * (c2 / -2);
+        }
+    }
+    if !true {
+        v4 = c1 / ((-3 - 2) + v2);
+    } elseif ((v3 / ((c1 % 7) + 8)) < (44 / ((-19 % 7) + 8)) give true otherwise false || (c1 >= v3)) {
+        for r1 in 0..7 {
+            io::printline((v1 > -2 give v3 >= (v1 - v1) otherwise true));
+            io::flush();
+            io::printline(- -f0(-1, S1::default()));
+            io::flush();
+        }
+        chk = ((chk * 31) + (((f0(-9, s1) % f0(c1, s1)) % (((- -3 / c1) % 7) + 8)) % 1000003)) % 1000000007;
+    }
+    s1.m0(true);
+    mut v7: bool = !((-936253307682707620 + v1) == ((false give v3 otherwise v1)));
+    v1++;
+    v1 -= ((v4 >= c1) != v7 give -5 otherwise 21 + v1);
+    io::printline(chk);
+    io::flush();
+    return (v3 % v2) - ((v3 > v4 give -3 otherwise v4));
+}
