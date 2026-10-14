@@ -21,8 +21,8 @@ Made by the owner; change them only with the owner.
   it, so every finding replays.
 - **CI every night** (00:00 IST, about three hours of fuzzing a job; owner,
   2026-10-14, weekly before). Bulk corpora live in CI artifacts, not in git.
-- **Language questions are parked** in `OPEN_QUESTIONS.md` and reviewed with
-  the owner at the end of the roadmap, not decided while fuzzing.
+- **Language questions go to the owner**, on the finding's issue, and are
+  not decided while fuzzing.
 - Decisions found by fuzzing and already made (recorded in turflang's
   FREEZE.md or docs and in `gen/SEMANTICS.md`): `INT_MIN % -1` is 0; `>>` by
   an amount outside [0, 64) traps `Integer overflow` like `<<`; assignment is
@@ -47,7 +47,6 @@ Made by the owner; change them only with the owner.
 | `ci/` | the nightly jobs, runnable locally (section 7) |
 | `.github/workflows/nightly.yml` | the nightly workflow |
 | `corpus/` | reserved for curated seeds; empty. Tier 0 and the engine seed from the turflang tree |
-| `OPEN_QUESTIONS.md` | language decisions found by fuzzing, waiting for the owner |
 | `work/`, `ci-out/` | scratch output, git-ignored |
 
 ## 3. Requirements and setup
@@ -224,9 +223,9 @@ library exited the host process), `unsound`, `wrong-message`.
    is not a finding: delete the directory. A harness artefact (ASan stack
    size, a slow seed) is fixed in the harness.
 3. **A language question** (the spec is silent, or a frozen decision would
-   change) goes to `OPEN_QUESTIONS.md` and the finding stays open. Once the
-   owner decides, the rule goes into turflang (FREEZE.md or the docs) and into
-   `gen/SEMANTICS.md` with its source.
+   change) goes to the owner on the finding's issue, and the finding stays
+   open. Once the owner decides, the rule goes into turflang (FREEZE.md or the
+   docs) and into `gen/SEMANTICS.md` with its source.
 4. **Minimize**, if the tool did not: `gen/reduce.py` for generated programs,
    `triage/minimize.py` (through `crash_fuzz.py`) for text, by hand for the
    last few lines. Keep `input.tr`/`prog.tr` beside it.
@@ -330,7 +329,9 @@ parameter, over arrays or Lists of `T`, or at `T` = struct, `int32`, `char`;
 `compare` on strings, `_`, destructuring and guards; `printline(char)`;
 `StringBuilder`, `split`/`join`, `pad_*`, `parse_int`, `for c in s`,
 `s[i] = c`; references in `Stack`/`Queue`/`Set`/`Map` or as generic
-arguments; `(&S)[]` slice parameters; inlining a helper into its
+arguments; `(&S)[]` slice parameters; what turflang 2.0.0 added (function
+values called from any expression, generic functions as values, `r to T`,
+`input(msg)`, `random::random_int`, `json`, `mem::Pool`); inlining a helper into its
 caller in the reducer. The generator never emits a read of a never-written
 `string` or `&U` array element (an open owner question).
 
@@ -339,9 +340,5 @@ before generics, not investigated. The engine is limited to about 7 exec/s
 by whole-program seeds; smaller seeds or a no-flow-analysis mode would raise
 it.
 
-**Open findings.** `findings/unsound/escape-boundary` (its four owner
-questions), `findings/unsound/int-to-reference-cast` and the rest of
-`OPEN_QUESTIONS.md`.
-
-**CI.** Not yet run on GitHub: both repos must be pushed, the locked commit
-included. The `fuzz-finding` label does not exist yet.
+**Open findings** are the open `fuzz-finding` issues; a finding not yet
+reported to turflang says so in its `report.md`.

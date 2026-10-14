@@ -24,7 +24,6 @@ Never discard a minimized reproducer.
 | `triage/` | signature bucketing, line minimization, findings directories |
 | `findings/` | one directory per bug: reproducer, minimized input, report. Committed = known |
 | `ci/` | the nightly CI run (`.github/workflows/nightly.yml`, 00:00 IST, about three hours a job): `process.sh`, `sanitized.sh`, `engine.sh` |
-| `OPEN_QUESTIONS.md` | language decisions found by fuzzing, parked for the owner |
 | `corpus/` | reserved for curated seeds (empty: seeds come from the turflang tree; bulk corpora are CI artifacts) |
 
 ## Quick start
