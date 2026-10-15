@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Compiler crash found by fuzzing
+    url: https://github.com/turf-lang/turf-lang/issues/new/choose
+    about: A crash or miscompile is a compiler bug, so report it in turf-lang with the minimized program.
