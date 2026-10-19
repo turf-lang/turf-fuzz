@@ -37,6 +37,9 @@ rm -rf "$OUT" && mkdir -p "$OUT/findings"
 [ -x "$TURF_ROOT/build/turfc" ] || { echo "no $TURF_ROOT/build/turfc" >&2; exit 2; }
 # ASan frames are larger than the parser's nesting cap allows for in 8 MB.
 ulimit -s 65536 || true
+# A panicking program aborts; no core, so the host's crash reporter never
+# holds it past the run timeout.
+ulimit -c 0 || true
 
 {
   echo "## turf-fuzz nightly: process tier"
