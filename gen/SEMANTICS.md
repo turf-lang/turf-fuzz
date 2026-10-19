@@ -230,7 +230,7 @@ keys outside that domain) grows a `double`/`Kp` table past 128 slots.
 | stdout is buffered and a trap `abort()`s, losing unflushed output, so the generator emits `io::flush();` after every `printline`. | probe; `runtime/turfrt_panic.c` |
 | A runtime check writes `panic: runtime check: <text> (<file>:<line>)` to stderr and aborts (SIGABRT). `<line>` is the line of the statement (or `elseif` branch) containing the faulting expression; a trap inside a helper or method reports the line there. The stdlib panics above have their own shapes; `oracles/differential.py` parses both. | probe; `runtime/turfrt_panic.c` |
 | `main` returning `v` exits with `v & 0xFF`. | probe |
-| Compiler warnings never change the program's output or exit status. | probe |
+| At their default level (`warn`), compiler warnings never change the program's output or exit status. | probe |
 
 ## Environment variables for the differential oracle
 
