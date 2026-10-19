@@ -1,0 +1,12 @@
+// turf-fuzz gen: seed=2026290000931 (reduced: 309 -> 12 lines, 371 probes, 65s, verdict kept on O0) paren=min
+import io;
+
+fn f2(): int {
+    if (false give 67 == -9223372036854775808 otherwise 41 < -5) {
+    }
+    return 0;
+}
+
+fn main(): int {
+    return 0;
+}

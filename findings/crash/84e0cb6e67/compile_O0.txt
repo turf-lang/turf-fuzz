@@ -1,0 +1,22 @@
+rc: -11
+ #0 0x00007f0a991c865f llvm::sys::PrintStackTrace(llvm::raw_ostream&, int) (/usr/lib/llvm-22/lib/libLLVM.so.22.1+0x4dc865f)
+ #1 0x00007f0a991c5e7b llvm::sys::RunSignalHandlers() (/usr/lib/llvm-22/lib/libLLVM.so.22.1+0x4dc5e7b)
+ #2 0x00007f0a991c942a (/usr/lib/llvm-22/lib/libLLVM.so.22.1+0x4dc942a)
+ #3 0x00007f0a93c45330 (/lib/x86_64-linux-gnu/libc.so.6+0x45330)
+ #4 0x00007f0a93d88915 (/lib/x86_64-linux-gnu/libc.so.6+0x188915)
+ #5 0x00007f0a990af737 llvm::APInt::equalSlowCase(llvm::APInt const&) const (/usr/lib/llvm-22/lib/libLLVM.so.22.1+0x4caf737)
+ #6 0x0000564cb1035f54 CollectChangedNodeIDsInternal(ExprAST const*, ExprAST const*, std::set<unsigned long, std::less<unsigned long>, std::allocator<unsigned long>>&) (/home/runner/work/turf-fuzz/turf-fuzz/turflang/build/turfc+0x157f54)
+ #7 0x0000564cb10360ee CollectChangedNodeIDsInternal(ExprAST const*, ExprAST const*, std::set<unsigned long, std::less<unsigned long>, std::allocator<unsigned long>>&) (/home/runner/work/turf-fuzz/turf-fuzz/turflang/build/turfc+0x1580ee)
+ #8 0x0000564cb10360ee CollectChangedNodeIDsInternal(ExprAST const*, ExprAST const*, std::set<unsigned long, std::less<unsigned long>, std::allocator<unsigned long>>&) (/home/runner/work/turf-fuzz/turf-fuzz/turflang/build/turfc+0x1580ee)
+ #9 0x0000564cb103343a LintIf(IfExprAST const*) Lint.cpp:0:0
+#10 0x0000564cb1032dca (anonymous namespace)::LintVisitor::visitBinary(BinaryExprAST&) Lint.cpp:0:0
+#11 0x0000564cb1032dca (anonymous namespace)::LintVisitor::visitBinary(BinaryExprAST&) Lint.cpp:0:0
+#12 0x0000564cb10330c9 LintIf(IfExprAST const*) Lint.cpp:0:0
+#13 0x0000564cb0ff260f ASTChildWalker::visitBlock(BlockExprAST&) (/home/runner/work/turf-fuzz/turf-fuzz/turflang/build/turfc+0x11460f)
+#14 0x0000564cb1030d0f LintExpression(ExprAST*) (/home/runner/work/turf-fuzz/turf-fuzz/turflang/build/turfc+0x152d0f)
+#15 0x0000564cb0fed1ed FuncDefExprAST::codegen() (/home/runner/work/turf-fuzz/turf-fuzz/turflang/build/turfc+0x10f1ed)
+#16 0x0000564cb0f531a9 runCompilerMain(int, char**) main.cpp:0:0
+#17 0x0000564cb0f42406 main (/home/runner/work/turf-fuzz/turf-fuzz/turflang/build/turfc+0x64406)
+#18 0x00007f0a93c2a1ca (/lib/x86_64-linux-gnu/libc.so.6+0x2a1ca)
+#19 0x00007f0a93c2a28b __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x2a28b)
+#20 0x0000564cb0f47085 _start (/home/runner/work/turf-fuzz/turf-fuzz/turflang/build/turfc+0x69085)

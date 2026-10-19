@@ -1,0 +1,6 @@
+fn main(): int {
+struct Box<T> {
+}
+    mut b: Box = Box::default();
+    return 0;
+}

@@ -9,6 +9,7 @@
 #   TURF_ROOT        the built turflang tree (build/turfc, build_asan/turfc)
 #   DIFF_SECONDS     differential oracle budget            (default 7200)
 #   TIER0_SECONDS    tier-0 crash fuzzer budget            (default 2400)
+#   OVERFLOW_SECONDS overflow oracle budget                (default 900)
 #   REDUCE_SECONDS   per new differential finding          (default 150)
 #   JOBS             parallel jobs                         (default: nproc)
 #   SEED             first generator seed (default: from the UTC date, so a
@@ -28,6 +29,7 @@ ROOT=$(pwd)
 export TURF_ROOT=${TURF_ROOT:-$ROOT/../turflang}
 DIFF_SECONDS=${DIFF_SECONDS:-7200}
 TIER0_SECONDS=${TIER0_SECONDS:-2400}
+OVERFLOW_SECONDS=${OVERFLOW_SECONDS:-900}
 REDUCE_SECONDS=${REDUCE_SECONDS:-150}
 JOBS=${JOBS:-$(nproc)}
 SEED=${SEED:-$(( $(date -u +%Y) * 1000000000 + 10#$(date -u +%j) * 1000000 ))}
@@ -37,6 +39,9 @@ rm -rf "$OUT" && mkdir -p "$OUT/findings"
 [ -x "$TURF_ROOT/build/turfc" ] || { echo "no $TURF_ROOT/build/turfc" >&2; exit 2; }
 # ASan frames are larger than the parser's nesting cap allows for in 8 MB.
 ulimit -s 65536 || true
+# A panicking program aborts; no core, so the host's crash reporter never
+# holds it past the run timeout.
+ulimit -c 0 || true
 
 {
   echo "## turf-fuzz nightly: process tier"
@@ -57,6 +62,11 @@ python3 -u oracles/soundness.py --jobs "$JOBS" > "$OUT/soundness.log" 2>&1
 grep -E "^ok:" "$OUT/soundness.log" | sed 's/^/- soundness /' >> "$OUT/summary.md"
 grep -E "^  (unsound-accepted|wrong-reason|rejected-valid|safe-wrong|crash) " "$OUT/soundness.log" \
   > "$OUT/soundness.txt" || true
+
+echo "== overflow oracle, ${OVERFLOW_SECONDS}s"
+python3 -u oracles/overflow.py --seconds "$OVERFLOW_SECONDS" --jobs "$JOBS" --seed "$SEED" \
+  > "$OUT/overflow.log" 2>&1
+grep -E "^overflow: " "$OUT/overflow.log" | sed 's/^/- /' >> "$OUT/summary.md"
 
 echo "== tier 0 crash fuzzer, ${TIER0_SECONDS}s"
 python3 -u tier0/crash_fuzz.py --seconds "$TIER0_SECONDS" --jobs "$JOBS" --opt random \

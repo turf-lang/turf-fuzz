@@ -30,6 +30,7 @@ import argparse
 import hashlib
 import os
 import re
+import resource
 import shutil
 import signal
 import subprocess
@@ -140,6 +141,15 @@ def tree_head():
 
 # --------------------------------------------------------------------- running
 
+# A Turf panic ends in abort(). On a CI runner the kernel hands that core to
+# the host's crash reporter (apport, systemd-coredump), which can hold the dying
+# process past RUN_TIMEOUT when the machine is busy: a program that had already
+# printed its panic was then reported as a "timeout" in one random
+# configuration (turf-fuzz #9-#13). No core is ever needed; set once here, every
+# child inherits it (a preexec_fn would not be safe under run.py's threads).
+resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+
+
 def _run(cmd, cwd, env=None, timeout=60):
     try:
         p = subprocess.run(cmd, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
@@ -158,19 +168,24 @@ class Outcome:
         self.rc, self.stdout, self.stderr, self.timed_out = rc, stdout, stderr, timed_out
         self.gc_validate = [l for l in stderr.splitlines() if l.startswith("TURF_GC_VALIDATE:")]
         m = PANIC_RE.search(stderr)
+        s = STDLIB_PANIC_RE.search(stderr)
+        trap = ((m.group(1), int(m.group(3))) if m else
+                (s.group(2), int(s.group(1) or 0)) if s else None)
         san = SANITIZER_RE.search(stderr)
-        if timed_out:
+        if timed_out and trap:
+            # The panic message is the last thing a program prints before
+            # abort(); seeing it means the program finished and only the
+            # process teardown ran over the limit (see RLIMIT_CORE above).
+            self.kind, self.detail = "trap", trap
+        elif timed_out:
             self.kind, self.detail = "timeout", ()
         elif san:
             # Whatever the exit status: a sanitizer report is the outcome.
             self.kind, self.detail = "sanitizer", (san.group(1).strip(),)
         elif rc is not None and rc >= 0:
             self.kind, self.detail = "exit", (rc,)
-        elif rc == -signal.SIGABRT and m:
-            self.kind, self.detail = "trap", (m.group(1), int(m.group(3)))
-        elif rc == -signal.SIGABRT and STDLIB_PANIC_RE.search(stderr):
-            s = STDLIB_PANIC_RE.search(stderr)
-            self.kind, self.detail = "trap", (s.group(2), int(s.group(1) or 0))
+        elif rc == -signal.SIGABRT and trap:
+            self.kind, self.detail = "trap", trap
         else:
             self.kind, self.detail = "signal", (-rc,)
 

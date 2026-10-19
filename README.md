@@ -19,7 +19,7 @@ Never discard a minimized reproducer.
 | `compiler.lock` | turflang commit under test; every finding records it |
 | `tier0/` | black-box token/line mutation crash fuzzer (port of turflang `scripts/dev/fuzz/crash_fuzz.py`); see `tier0/README.md` |
 | `gen/` | typed program generator + reference evaluator (knows the expected result); every rule it relies on is in `gen/SEMANTICS.md`. `gen/trace.py SEED` finds the first statement where a wrong answer diverges; `gen/reduce.py SEED` shrinks a finding on the AST while its verdict stays the same |
-| `oracles/` | differential (`-O` levels, `-g`, GC stress/validate, the ASan runtime; `run.py` loops over seeds), soundness (`soundness.py`: the F-MEM-5 escape boundary) |
+| `oracles/` | differential (`-O` levels, `-g`, GC stress/validate, the ASan runtime; `run.py` loops over seeds), soundness (`soundness.py`: the F-MEM-5 escape boundary), overflow (`overflow.py`: every run-time `int` and index check against an exact interpreter, including the ones check elision removes) |
 | `engine/` | libFuzzer in-process targets over `include/turf/Analysis.h` (C++, clang); see `engine/README.md` |
 | `triage/` | signature bucketing, line minimization, findings directories |
 | `findings/` | one directory per bug: reproducer, minimized input, report. Committed = known |
@@ -31,6 +31,7 @@ Never discard a minimized reproducer.
     export TURF_ROOT=../turflang                  # a built turflang tree (the default)
     python3 -u oracles/run.py --seconds 300 --jobs 8 --seed 1000 --reduce 150
     python3 oracles/soundness.py --jobs 8
+    python3 oracles/overflow.py --seconds 600 --jobs 8 --seed 1
     tier0/crash_fuzz.py --seconds 300 --jobs 8 --opt random
 
 ## Requirements
