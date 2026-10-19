@@ -1,0 +1,9 @@
+import test;
+struct Box<T> {
+}
+fn<T> Box.sizeOfT(): int {
+}
+fn main(): int {
+    mut bi: Box<int> = Box::default();
+    test::assert(bi.sizeOfT() == 8, "sizeof(T) in Box<int>.sizeOfT() wrong");
+}

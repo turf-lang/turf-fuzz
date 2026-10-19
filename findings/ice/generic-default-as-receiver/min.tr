@@ -1,0 +1,4 @@
+import map::Map;
+fn main(): int {
+    mut m: Map<string, int> = Map::default().get("nope");
+}

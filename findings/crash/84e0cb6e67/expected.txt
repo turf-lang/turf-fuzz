@@ -1,0 +1,4 @@
+outcome: trap Array index out of bounds for 'a1' line 206
+--- stdout ---
+2
+-6

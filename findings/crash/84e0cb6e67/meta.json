@@ -1,0 +1,15 @@
+{
+  "class": "crash",
+  "signature": "compile crash rc=-11 ",
+  "summary": "compiler crashed at O0 (rc -11)",
+  "note": "",
+  "seed": 2026290000931,
+  "last_seed": 2026290002285,
+  "count": 4,
+  "compiler_lock_commit": "09118c89d37a0d4fc2dc532934dd7f8ef39d7446",
+  "compiler_tree_head": "09118c89d37a0d4fc2dc532934dd7f8ef39d7446",
+  "turfc_version": "turfc 2.0.0 | interface 1.7 | llvm 22.1.8 | runtime turf_rt_abi_2_0 | root /home/runner/work/turf-fuzz/turf-fuzz/turflang | linker system-cc | smart not-built",
+  "found": "2026-10-17T21:20:40",
+  "reproduce": "python3 oracles/differential.py 2026290000931",
+  "status": "reduced (min.tr): 309 -> 12 lines, 371 probes, 65s, verdict kept on O0"
+}

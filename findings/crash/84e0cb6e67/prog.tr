@@ -1,0 +1,309 @@
+// turf-fuzz gen: seed=2026290000931 paren=min
+import io;
+
+enum En0 { Red, Green }
+
+enum En1 { Red, Green, Blue, Gold }
+
+struct Gb0<T> { v: T, n: int }
+
+fn<T> Gb0.put(x: T): void {
+    self.v = x;
+    self.n = self.n + 1;
+}
+
+fn<T> Gb0.get(): T {
+    return self.v;
+}
+
+struct S0 { f0: bool }
+
+struct S1 { f0: En1, f1: int, f2: S0 }
+
+struct S2 { f0: S0, f1: S0[2] }
+
+fn S0.m0(p0: int): void {
+    mut v1: En0 = En0::Red;
+    v1 = ((((p0 - p0) % 2 + 2) % 2) to En0);
+    mut c1: int = 0;
+    while c1 < 4 {
+        c1 += 1;
+        mut v2: int = 3037000500;
+        io::printline(~(p0 <= p0 give c1 | p0 otherwise (v1 to int)));
+        io::flush();
+    }
+}
+
+fn S0.m1(p0: bool, p1: int): void {
+    mut v1: En0 = (((En0::COUNT % 2 + 2) % 2) to En0);
+}
+
+fn S1.m0(): void {
+    io::printline(('9' to int));
+    io::flush();
+    io::printline(((self.f2.f0 || self.f1 > 7 give !(98 < 0) otherwise g0(5, false, -4 > -2)) give g1(self.f1 + 4294967296, -19 <= 3037000499, false) otherwise 2 & 21991 < 4 - self.f1));
+    io::flush();
+}
+
+fn S2.m0(p0: int): void {
+    if (p0 < p0 - 7 give !!false otherwise (true || p0 != -3) && p0 <= p0) {
+        if p0 + p0 to char == '0' {
+            io::printline((p0 < p0 give En1::Red otherwise En1::Green) != En1::Red && p0 - p0 >= p0);
+            io::flush();
+        } elseif (g1(~p0, En1::Blue != En1::Red, p0 < p0 || p0 > p0) give p0 > p0 - 19 otherwise false) {
+            io::printline(p0);
+            io::flush();
+            io::printline(((g0(p0, p0, p0) to int32) to int));
+            io::flush();
+            mut v1: int32 = ((p0 - p0) to int32);
+        } else {
+            io::printline(-3);
+            io::flush();
+        }
+        io::printline(En1::COUNT - (-7.0 to int));
+        io::flush();
+        io::printline(g1(g1(-3, p0 - p0, p0), p0, 6686161580018394933));
+        io::flush();
+    } else {
+        mut v2: En1 = En1::Gold;
+        compare (g1(-p0, En1::Gold, v2)) {
+            matches En1::Gold:
+            matches En1::Green:
+                io::printline((p0 to double));
+                io::flush();
+                io::printline(((p0 <= 4 give p0 < p0 otherwise true) || p0 > p0 give -100.0 - (p0 to double) otherwise 0.25));
+                io::flush();
+            done
+            matches En1::Red:
+                mut a1: En1[2] = [(false give v2 otherwise v2), v2];
+            done
+            matches En1::Blue:
+                mut v3: En0 = (p0 > p0 give En0::Green otherwise g1(p0, En0::Red, En0::Red));
+                v3 = v3;
+            done
+        }
+    }
+    io::printline(-0.2);
+    io::flush();
+    mut v4: En1 = En1::Green;
+    mut s1: S1 = S1::default();
+}
+
+fn opaque(x: int): int {
+    return x;
+}
+
+fn<T> g0(c: int, a: T, b: T): T {
+    mut chk: int = 0;
+    chk = (chk * 31 + (c - c % (2.5 to int)) % 1000003) % 1000000007;
+    chk = (chk * 31 + c % 1000003) % 1000000007;
+    chk = (chk * 31 + c % 1000003) % 1000000007;
+    chk = (chk * 31 + 57 % 1000003) % 1000000007;
+    if !(c >= c) || (false give false otherwise 40 <= c) {
+        return a;
+    }
+    return b;
+}
+
+fn<T> g1(c: int, a: T, b: T): T {
+    mut chk: int = 0;
+    immut v1: int = c * -c - -2;
+    mut v2: double = g0(c, 10.0, -1e+16) + 1e+308 * 0.5;
+    if g0(c % (c % 7 + 8), c >= 8, false != (c == c)) {
+        return a;
+    }
+    return b;
+}
+
+fn f0(): int {
+    mut chk: int = 0;
+    mut v1: En1 = En1::Gold;
+    mut v2: En0 = En0::Red;
+    mut v3: double = -10000000000.0;
+    mut v4: char = 'c';
+    mut a1: bool[4];
+    a1[-3] = ((((-5 to int32 to int) % 2 + 2) % 2) to En0) == g0(g0(0, 1, -2), g1(-2, v2, En0::Red), v2);
+    for r1 in 2..2 {
+        chk = (chk * 31 + r1 % 1000003) % 1000000007;
+        mut c1: int = 0;
+        while c1 < 1 {
+            c1++;
+            chk = (chk * 31 + r1 % 1000003) % 1000000007;
+            if !(c1 <= c1) {
+                chk = (chk * 31 + g1(c1 * (-72 to int32 to int), En1::COUNT, -5 >> ((En1::Blue to int) & 63)) % 1000003) % 1000000007;
+                chk = (chk * 31 + ((('b' to int) >> (4 - c1 & 63)) + r1) % 1000003) % 1000000007;
+                chk = (chk * 31 + ((v2 == v2 give (En0::Red to int) otherwise c1 ^ c1) - c1 / (r1 / r1 % 7 + 8)) % 1000003) % 1000000007;
+            } elseif -6 & (6 | c1) > (En0::Red != v2 give r1 | c1 otherwise 9 >> (r1 & 63)) {
+                v2 = ((((c1 | r1) % 2 + 2) % 2) to En0);
+                v1 = v1;
+                a1 = [-60 <= r1, a1[-1] && c1 < c1, r1 < -9223372036854775807, false == (c1 != c1)];
+            } elseif c1 > r1 && ((c1 >= r1 give 4 < 6 otherwise 7 == c1) && false) {
+                chk = (chk * 31 + (En0::Red to int) % 1000003) % 1000000007;
+            } else {
+                chk = (chk * 31 + c1 % 1000003) % 1000000007;
+                mut s1: S1 = S1::default();
+                chk = (chk * 31 + (v3 to int) / 1000 % 1000003) % 1000000007;
+            }
+            if (-2 ^ r1) / (-r1 % 7 + 8) <= c1 {
+            } else {
+                chk = (chk * 31 + g0((c1 > -92608 give r1 otherwise r1), (v2 to int), c1) / (g0(r1, g1(r1, r1, r1), r1) % 7 + 8) % 1000003) % 1000000007;
+                mut v5: int32 = (6 to int32);
+            }
+            io::printline(- - -v3);
+            io::flush();
+        }
+        a1 = [!false, v2 != v2, v2 != v2, v3 == v3];
+        v1 = ((((r1 - c1) % 4 + 4) % 4) to En1);
+    }
+    v2 = (-1 != 8 give (false give v2 otherwise En0::Red) otherwise (((7 % 2 + 2) % 2) to En0));
+    mut v6: En0 = v2;
+    if g0(a1.length(), false, v1 != v1 || false) {
+        v4 = ((-7556 ^ -1) to char);
+        if false != (v6 != v6) {
+            chk = (chk * 31 + (7 & ((26 to int32 to int) & -62794 % (3 % 7 + 8))) % 1000003) % 1000000007;
+        } elseif g1(-54 | 7, v3, -100.0) < 2 to double {
+            io::printline(3 + 0);
+            io::flush();
+        } else {
+            chk = (chk * 31 + (true || 5 == -75 || true give -11 * -6 + g1(4294967296, -1, 8231) otherwise -82 >> 47 >> (-2 / (7 % 7 + 8) & 63)) % 1000003) % 1000000007;
+            mut v7: En0 = v2;
+        }
+    }
+    chk = (chk * 31 + (v4 to int) % 1000003) % 1000000007;
+    v3 = v3 % (-62 to int32 to double);
+    return -4 - (-9 + (-8 + 3));
+}
+
+fn f1(p0: S1): int {
+    mut chk: int = 0;
+    mut v1: int = 5;
+    mut v2: En1 = En1::Green;
+    mut s1: S2 = S2::default();
+    mut a1: S0[2] = [p0.f2, S0::default()];
+    v1 = v1;
+    io::printline(((v1 + v1 to int32) to double));
+    io::flush();
+    return v1;
+}
+
+fn f2(): int {
+    mut chk: int = 0;
+    mut v1: double = 2.0;
+    mut v2: double = v1;
+    mut v3: En1 = En1::Gold;
+    mut a1: int[4] = [-54924, -3 & -8, ((-3.0) to int), -1];
+    if !((false give 67 == -9223372036854775808 otherwise 41 < -5) || !(8 < a1[1 % 4])) {
+    } else {
+        io::printline((a1[2] <= -75 + -7 give 0.25 * v2 * v2 otherwise v1));
+        io::flush();
+        a1 = [-7, 6556, a1[a1.length() % 4], g0(a1[-1 % 4], 8, a1[a1[67721 % 4] % 4])];
+    }
+    v3 = (((a1[-6 % 4] % 4 + 4) % 4) to En1);
+    v3 = v3;
+    a1[('c' to int) % 4] = (a1[0 % 4] | -37749 > '0' to int give ('Z' to int) otherwise ((-v2) to int));
+    io::printline(-6);
+    io::flush();
+    mut v4: En1 = g0(a1[a1[opaque(a1[9 % 4])] % 4] - a1[-6 % 4], (true give v3 otherwise v3), (1178613199195278839 == a1[2] give En1::Gold otherwise v3));
+    return ((a1[opaque(-2147483648)] * 3037000500 to char) to int);
+}
+
+fn f3(): int {
+    mut chk: int = 0;
+    mut v1: int = 7;
+    mut v2: En0 = En0::Red;
+    mut s1: S2 = S2::default();
+    compare (((((v1 + v1) % 4 + 4) % 4) to En1)) {
+        matches En1::Gold:
+        matches En1::Green:
+            mut a1: S1[2] = [S1::default(), S1::default()];
+            mut v3: int = -g0(v1, f1(a1[-6 % 2]), v1 - v1);
+        done
+        matches En1::Blue:
+        matches En1::Red:
+            mut s2: S2 = S2::default();
+            s2.f0.m1(En1::Red == g0(v1, En1::Blue, En1::Blue), -2430152678194869918);
+        done
+    }
+    return v1;
+}
+
+fn main(): int {
+    mut chk: int = 0;
+    mut v1: En0 = En0::Red;
+    mut v2: En1 = En1::Gold;
+    mut v3: int32 = (66 to int32);
+    mut v4: bool = true;
+    mut s1: S0 = S0::default();
+    mut a1: S0[2] = [s1, s1];
+    if -8 / (-82134 % 7 + 8) > f3() && !g1(1, 0 < 8, false) {
+    }
+    chk = (chk * 31 + (-61 << ((true give 9 otherwise 2) / ((-1 << 58) % 7 + 8) & 63)) % 1000003) % 1000000007;
+    if !(1e+300 == 0.5 && 8 != 2 != 8 <= a1.length()) {
+    } elseif (1 > 6 give v4 otherwise -1 != -96) == v4 == v4 {
+        if -3 >= 18 - 6 != 6 | -9 >= 2 {
+            if (1e+16 to int) / 7 < -5 + 0 - g0(3, 7, 8) {
+                chk = (chk * 31 + ((!(-9 < 1) give v2 otherwise En1::Red) to int) % 1000003) % 1000000007;
+                io::printline((En1::Green to int) % (6 <= 5 give -1 otherwise -1) % ((En0::Red to int) / (('a' to int) % 7 + 8) % 7 + 8));
+                io::flush();
+                chk = (chk * 31 + 6 % 1000003) % 1000000007;
+            }
+        } elseif !(!(31 < 3) && -9 >= -8) {
+            immut v5: int = f2();
+            v1 = ((((v2 to int) % 2 + 2) % 2) to En0);
+            mut a2: char[5];
+            a2[-2] = 'a';
+        }
+        if v3 to double > g1(3037000500, ((-4) to double), (a1.length() to double)) {
+            io::printline(((f1(S1::default()) * f2()) to double));
+            io::flush();
+            chk = (chk * 31 + (((((-50 to int32 to int) % 4 + 4) % 4) to En1) to int) % 1000003) % 1000000007;
+        } else {
+            v1 = v1;
+            chk = (chk * 31 + ((!(-50509 == -4) give 7 ^ -8 otherwise 2147483647) << 17) % 1000003) % 1000000007;
+        }
+    } else {
+        mut v6: int = f0();
+    }
+    v1 = ((((-3 - 1) % 2 + 2) % 2) to En0);
+    v2 = v2;
+    if true {
+        for e1 in a1 {
+            mut v7: bool = false;
+            if 123.456 == 5e-324 - 3.0 % (-10000000000.0 * -10000000000.0 + 1.0) {
+                v4 = 0.5 - -10000000000.0 >= 0.001 / 1e+300 * -10000000000.0;
+                chk = (chk * 31 + (-51 to int32 to int) / -7 % 1000003) % 1000000007;
+            }
+        }
+        mut w1: S0[] = a1.copy();
+        chk = (chk * 31 + ((((-2 % 2 + 2) % 2) to En0) to int) % 1000003) % 1000000007;
+    } elseif (100.0 != -2.0 || !(51867 != -89046)) && (3.0 != -2.5 || v4) {
+        mut s2: Gb0<bool> = Gb0::default();
+    }
+    if f2() < 7 + 5 ^ 2 {
+        mut c1: int = 0;
+        while c1 < 1 {
+            c1 += 1;
+            if g1(c1, c1, c1) > En1::COUNT {
+                break;
+            }
+            mut v8: double = 10.0;
+            chk = (chk * 31 + c1 % 1000003) % 1000000007;
+            mut v9: int = ('c' to int) + g1(c1, (En1::Green to int), c1 & c1);
+        }
+        mut a3: S2[3] = [S2::default(), S2::default(), S2::default()];
+    } else {
+        v4 = f3() != -24 >> 31 & -80777;
+    }
+    mut v10: int = (g0(5 & -80598, (v4 give v2 otherwise En1::Blue), (((8 % 4 + 4) % 4) to En1)) to int);
+    for r1 in 2..6 {
+        if g0(r1, v10 & r1 >= r1 ^ r1, 7 + v10 <= v2 to int) {
+            io::printline((r1 == v10 give r1 otherwise r1) < r1 + -4 && r1 + r1 > f2());
+            io::flush();
+            v10++;
+        }
+    }
+    chk = (chk * 31 + ((!(v10 != v10) give v10 otherwise v10 / v10) >> 59) % 1000003) % 1000000007;
+    io::printline(chk);
+    io::flush();
+    return 0;
+}
