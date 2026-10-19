@@ -205,6 +205,11 @@ _TERMINATE = re.compile(r"terminate called[^\n]*")
 _WHAT = re.compile(r"what\(\):[^\n]*")
 _INTERNAL = re.compile(r"[Ii]nternal (?:compiler )?error[^\n]*")
 _STDEXC = re.compile(r"std::(?:bad_alloc|out_of_range)[^\n]*")
+# A diagnostic quotes the input's own line (`  12 │ <source>`, then `     │ ^`).
+# A mutated input can carry crash text in a comment, so a quoted line is never
+# evidence: `fn main(): int // stopped with "Internal compiler error: ..."` was
+# filed as an ICE when the compiler only reported E107 (turf-fuzz #6).
+_EXCERPT = re.compile(r"^[ \t]*\d*[ \t]*\u2502.*$", re.M)
 
 
 def _sanitizer(out: str) -> Signature:
@@ -253,7 +258,7 @@ def compute(rc: int | None, output: str) -> Signature | None:
     (exit 0 or 1, no crash text)."""
     if rc is None:
         return Signature("hang", "hang")
-    out = ANSI.sub("", output or "")
+    out = _EXCERPT.sub("", ANSI.sub("", output or ""))
 
     if _SANITIZER.search(out):
         return _sanitizer(out)
