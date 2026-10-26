@@ -1,0 +1,1 @@
+fn<Holder> Holder.count(): int { return self.items.length(); }
