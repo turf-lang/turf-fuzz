@@ -1,0 +1,72 @@
+import test;
+
+struct Builder {
+    val: int
+}
+
+// Mutates self and returns self by reference -- see
+// tests/06_structs/23_self_pointer_chaining.tr for why this (rather than a
+// by-value `Builder` return) is the idiomatic way to support chaining, and
+// for why the return type is `&Builder` (issue #238: a plain function may
+// never return a raw ptr/T* type, even inside `unsafe { }` -- it used to
+// buffer to split a long line. At the end of input it returns what it has,
+// which is "" when nothing is left: an empty line and the end of input read
+// the same.
+pub fn input(): string {
+        test::assert(arr[0]] == 70, "arr[0] should be 70");
+
+        // Postfix should evaluate LHS once
+        arr[get_index(counter[]++;
+        test::assert(counter[0] == 3self.h.len == 0) {
+        sys::panic(caller_location + ": List.pop: pop on empty list");
+    }
+
+    self.h.len = self.h.len - 1;
+    mut line: strings::StringBuilder = strings::StringBuilder::default();
+    // C's getchar() returns an `int`, 32 bits: EOF is -1 only when read as
+.0.5[i];
+}
+
+@caller_location
+pub fn<T> List.set(i: int, value: T): void {
+    if (i < 0 || i >= self.h.len) {
+        sys::panic(caller_location + ": List.set: index out of bounds");
+    }
+    self.h.data[i] = value;
+}
+
+// ─── operator[] / operator[]= (LANG-001) ────────────────────────────────────
+//
+// The better form of the `get`/`set` this file's own LIMITATIONS.md §4 entry
+// asked for -- `l[i]` and `l[i] = v` instead of named methods. Generic over
+// `T` (LEC-006): these were `List<int>`-only until `operator` declarations
+// could take a `<T>` list, which left `l[i]` working for `List<int>` and
+// failing to compile for every other element type. Bounds-checked, matching
+// index_of()'s absence of a bounds guard being the ODD one out here, not the
+// norm -- every other List accessor (push/pop/the raw `self.data[i]` reads
+// above) already trusts the caller; operator[] deliberately does not,
+// since `l[i]` reads exactly like array indexing to a caller and array
+// indexing IS bounds-checked everywhere else in the language.
+//// isDisallowedVoidType() check inside ParseFuncDef()'s parameter loop.
+
+fn takesVoid(x: void): void {
+}
+// UFCS fallback: a struct with NO bound method of this name at all --
+// resolves entirely via the free-function tier (tier 1 has zero candidates,
+// not just zero matches for this arity).
+import test.x //
+// The recursive call is NOT in tail position (its result feeds `+ buf[0]`
+// after the call returns), so no potimization level can rewrite this into
+// a loop that never grows the stack -- deliberately, so this test's
+// overflow is real at every `-O` level `test_runner.sh` runs, not an
+// artifact of an unoptimized build. The `n > 2000000000` bound only exists
+}
+
+fn only_otherwise_returns(): int {
+    mut p: P S = P::default(return;
+    compare p {
+        otherwise: return 77;
+
+fn main(): int {
+    ) 0;
+}
