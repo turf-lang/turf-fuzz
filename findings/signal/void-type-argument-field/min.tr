@@ -1,0 +1,5 @@
+struct Box<T> {
+    v: T
+}
+fn unused_nested(b: Box<Box<void>>): int {
+}

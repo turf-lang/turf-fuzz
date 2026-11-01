@@ -117,7 +117,12 @@ COMPILER_CRASH_RE = re.compile(
 SANITIZER_RE = re.compile(
     r"(ERROR: AddressSanitizer: [^\n]*|SUMMARY: (?:Address|UndefinedBehavior)Sanitizer: [^\n]*"
     r"|[^\n]*: runtime error: [^\n]*)")
-ERROR_CODE_RE = re.compile(r"\[(E\d{3})")
+# The code of an ERROR header only: a warning prints `── warning at ... [E156`
+# with the same bracket, and a rejected program that also warned (a constant
+# out-of-range index beside a self-assignment) must be judged by its errors.
+# The box-drawing prefix is left out: _run() decodes as latin-1, so `──`
+# arrives as mojibake. A whole-file error has no position (`error [E119`).
+ERROR_CODE_RE = re.compile(r"\berror (?:at line \d+, col \d+ )?\[(E\d{3})")
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
