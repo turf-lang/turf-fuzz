@@ -349,7 +349,10 @@ def check(name, text, expected, msg, keep_dir):
             got = (r[1] + r[2]).strip().replace("\n", " ")[:60]
             return name, "unsound-accepted", "ran: %s" % got, wd
         code, plain = diag(out)
-        if code != "E086" or msg not in plain:
+        # TurfLang 2.3 rewords E086 ("I cannot let a reference ... be
+        # returned"); 2.2 said "can't be returned". The sink's own words are
+        # the same in both.
+        if code != "E086" or (msg not in plain and msg.replace("can't ", "", 1) not in plain):
             return name, "wrong-reason", "%s %s" % (code, plain.strip().splitlines()[2:4]), wd
         shutil.rmtree(wd, ignore_errors=True)
         return name, "ok", "", None
