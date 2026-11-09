@@ -249,7 +249,7 @@ is in `ci/*.sh`, which run the same locally.
 
 | Job | Script | What |
 |---|---|---|
-| `process` (pinned, master) | `ci/process.sh` | differential + reduction (7200 s), soundness, tier 0 (2400 s), against the lock and against turflang master |
+| `process` (pinned, master) | `ci/process.sh` | differential + reduction (7200 s), soundness, overflow (900 s), wrapping (600 s), tier 0 (2400 s), against the lock and against turflang master |
 | `sanitized` | `ci/sanitized.sh` | tier 0 against the ASan + UBSan compiler from master (10800 s); turflang's former nightly crash fuzz |
 | `engine` | `ci/engine.sh` | `fuzz_analyze_tok` (10800 s), continuing from last night's `engine-corpus` artifact (30 days; the first nights fall back to the last `weekly.yml` run's) |
 

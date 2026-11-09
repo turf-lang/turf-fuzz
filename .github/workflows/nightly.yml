@@ -129,7 +129,7 @@ jobs:
           cmake -S turflang -B turflang/build -DCMAKE_BUILD_TYPE=Release \
             -DTURF_SMART=OFF -DTURF_BUILD_CLI=OFF
           cmake --build turflang/build -j "$(nproc)"
-      - name: Fuzz (differential + reduction, soundness, tier 0)
+      - name: Fuzz (differential + reduction, soundness, overflow, wrapping, tier 0)
         env:
           TURF_ROOT: ${{ github.workspace }}/turflang
           DIFF_SECONDS: ${{ github.event.inputs.diff_seconds || '7200' }}

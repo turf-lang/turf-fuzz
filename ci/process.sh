@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The nightly process-tier run: the differential oracle (with reduction), the
-# soundness oracle and the tier-0 crash fuzzer, against an already built
+# soundness, overflow and wrapping oracles and the tier-0 crash fuzzer, against an already built
 # turflang tree. Run by .github/workflows/nightly.yml; runs the same locally.
 #
 #   ci/process.sh            (TURF_ROOT defaults to ../turflang)
@@ -10,6 +10,7 @@
 #   DIFF_SECONDS     differential oracle budget            (default 7200)
 #   TIER0_SECONDS    tier-0 crash fuzzer budget            (default 2400)
 #   OVERFLOW_SECONDS overflow oracle budget                (default 900)
+#   WRAPPING_SECONDS wrapping oracle budget                (default 600)
 #   REDUCE_SECONDS   per new differential finding          (default 150)
 #   JOBS             parallel jobs                         (default: nproc)
 #   SEED             first generator seed (default: from the UTC date, so a
@@ -30,6 +31,7 @@ export TURF_ROOT=${TURF_ROOT:-$ROOT/../turflang}
 DIFF_SECONDS=${DIFF_SECONDS:-7200}
 TIER0_SECONDS=${TIER0_SECONDS:-2400}
 OVERFLOW_SECONDS=${OVERFLOW_SECONDS:-900}
+WRAPPING_SECONDS=${WRAPPING_SECONDS:-600}
 REDUCE_SECONDS=${REDUCE_SECONDS:-150}
 JOBS=${JOBS:-$(nproc)}
 SEED=${SEED:-$(( $(date -u +%Y) * 1000000000 + 10#$(date -u +%j) * 1000000 ))}
@@ -67,6 +69,11 @@ echo "== overflow oracle, ${OVERFLOW_SECONDS}s"
 python3 -u oracles/overflow.py --seconds "$OVERFLOW_SECONDS" --jobs "$JOBS" --seed "$SEED" \
   > "$OUT/overflow.log" 2>&1
 grep -E "^overflow: " "$OUT/overflow.log" | sed 's/^/- /' >> "$OUT/summary.md"
+
+echo "== wrapping oracle, ${WRAPPING_SECONDS}s"
+python3 -u oracles/wrapping.py --seconds "$WRAPPING_SECONDS" --jobs "$JOBS" --seed "$SEED" \
+  > "$OUT/wrapping.log" 2>&1
+grep -E "^wrapping: " "$OUT/wrapping.log" | sed 's/^/- /' >> "$OUT/summary.md"
 
 echo "== tier 0 crash fuzzer, ${TIER0_SECONDS}s"
 python3 -u tier0/crash_fuzz.py --seconds "$TIER0_SECONDS" --jobs "$JOBS" --opt random \
