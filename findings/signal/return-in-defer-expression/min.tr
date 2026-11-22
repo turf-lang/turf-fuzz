@@ -1,0 +1,8 @@
+struct N { val: int, next: &?N }
+fn f(): &N {
+    mut n: N = N::default();
+    mut p: &N = &n;
+    defer p = 
+    return p;
+}
+

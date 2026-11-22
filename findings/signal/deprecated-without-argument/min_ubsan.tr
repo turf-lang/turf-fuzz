@@ -1,0 +1,7 @@
+@deprecated
+fn make(): int {
+}
+fn main(): int {
+    return make()
+}
+
