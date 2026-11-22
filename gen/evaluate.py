@@ -274,6 +274,7 @@ class _Machine:
         self.funcs = {f.name: f for f in program.funcs}
         self.methods = {(m.struct.name, m.name): m
                         for st in program.structs for m in st.methods}
+        self.gput_n_line = getattr(program, "gput_n_line", {})
         self.out = []
         self.steps = 0
         self.defers = []  # one list per block being run, innermost last
@@ -731,7 +732,13 @@ class _Machine:
             v = self.ev(s.e, env)  # the argument, then the receiver
             sv = self.obj(s.recv, env)
             put(sv.f, "v", v, s.recv.ty.field_type("v"))
+            # `self.n = self.n + 1;` runs inside put: an overflow traps at
+            # that line of the template, not at the call (SEMANTICS.md, a
+            # trap inside a method reports the line there).
+            saved = self.line
+            self.line = self.gput_n_line.get(getattr(s.recv.ty, "base", None), self.line)
             sv.f["n"] = self.apply("+", sv.f["n"], 1)
+            self.line = saved
         elif isinstance(s, CStmt):
             args = [self.ev(a, env) for a in s.args]
             self.coll_method(self.obj(s.base, env), s.name, args)

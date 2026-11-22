@@ -121,7 +121,7 @@ sweep loop calls one for every `k`, so each variant is built, carried out
 | Rule | Source |
 |---|---|
 | `fn<T> gN(c: int, a: T, b: T): T`: `T` is inferred from `a` and `b` at each call, and every distinct `T` is its own instantiation (F-GEN-1). The body is ordinary generated code over `c` and its own locals; `T` has no operations (F-GEN-3), so the only `T` expressions are `a` and `b`, returned. Arguments pass by value. Called at `int`, `bool`, `string`, `double` and enum types. | doc `generics_and_operators.md`, `FREEZE.md` 6.1; probe (g1.tr) |
-| `struct Gb0<T> { v: T, n: int }` with `fn<T> Gb0.put(x: T): void { self.v = x; self.n = self.n + 1; }` and `fn<T> Gb0.get(): T { return self.v; }`. `Gb0<X>` is a struct value like any other: copied by assignment, fields read and written, `Gb0::default()` where a declaration or assignment gives the type. Only as a local. | doc `structs_and_enums.md` ("Generic structs"); probe (g1.tr) |
+| `struct Gb0<T> { v: T, n: int }` with `fn<T> Gb0.put(x: T): void { self.v = x; self.n = self.n + 1; }` and `fn<T> Gb0.get(): T { return self.v; }`. `Gb0<X>` is a struct value like any other: copied by assignment, fields read and written, `Gb0::default()` where a declaration or assignment gives the type. Only as a local. `put`'s `self.n + 1` overflowing traps at the line of `self.n = self.n + 1;` in the template, not at the call. | doc `structs_and_enums.md` ("Generic structs"); probe (g1.tr) |
 | A generic call's result has the type of its own instantiation. | turflang 813fb53 (before it, with `g<double>` and `g<int32>` both instantiated, a call on int32 arguments was typed double and a following `to int` was an internal compiler error) |
 
 ## References (`&S`, `&?S`, `heap()`)
