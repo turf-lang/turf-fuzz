@@ -1,0 +1,7 @@
+struct 0x Box<T> {
+}
+fn<T> Box.new(v: int32): void {
+}
+fn main(): int {
+    mut b: Box<string> = Box::new(42);
+}

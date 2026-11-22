@@ -1,0 +1,7 @@
+# ICE: a generic constructor whose parameters never mention `T`
+
+- class: internal compiler error, `monomorphized instantiation of 'Box.new' failed to re-resolve` and, without the earlier errors, `LLVM function 'turf_Box.new_Box_ptr_int' not found after successful name resolution` (E011)
+- found: nightly process tier (pinned), from `tests/38_monomorphization/fail_generic_constructor_string_arg.tr` (turf-fuzz #28, signature `ice/acd96ffd1c05`)
+- repro: `min.tr`; the valid form is `struct Box<T> { v: T, n: int }`, `fn<T> Box.new(k: int): void { self.n = k; }`, `mut b: Box<string> = Box<string>::new(42);`
+- cause: a constructor's type arguments were bound only by unifying its parameters with the call's arguments. With `T` in no parameter nothing was bound, no instantiation was requested, and the call named a function nothing emitted. Found beside it: a request listed its type arguments in the order the parameters first mention them, while the monomorphizer pairs them with the declared order, so `fn<A, B> f(x: B, y: A)` was instantiated with A and B swapped
+- fixed: turflang 0fc3154 (branch `roadmap/v2.3.0`): the request is recorded from the type being built when the arguments leave a type parameter unbound, and every request follows the declared order. Tests: `tests/38_monomorphization/generic_constructor_type_param_only_in_struct.tr`, `tests/38_monomorphization/generic_type_args_declaration_order.tr`
