@@ -21,6 +21,10 @@ count): unsound/overflow-missed-<trap> (a check that should have fired did
 not), miscompile/overflow-spurious-<trap> and miscompile/overflow-wrong-value,
 rejected-valid/overflow-<codes> (a program refused at compile time; an E001
 is accepted only for an index line that never runs in range).
+
+oracles/wrapping.py runs the same generator and interpreter with a share of
+the operations made `math::wrapping_*` calls (Gen's `wrap`); at 0, as here,
+the generator draws nothing extra, so a seed's program never changes.
 """
 
 import argparse
@@ -65,10 +69,47 @@ class Cont(Exception):
 
 # ------------------------------------------------------------------ generating
 
+# math::wrapping_* (NM-3): int arithmetic modulo 2^64 that never traps. The
+# first four are lowered to one instruction (turflang src/sema/Intrinsics.h,
+# kind 5); the rest are Turf built on them. A wrapped value is exactly the
+# kind of value a range proof can get wrong, so the wrapping oracle
+# (oracles/wrapping.py) mixes these calls into the same programs.
+WRAP2 = {
+    "wrapping_add": lambda a, b: wrap64(a + b),
+    "wrapping_sub": lambda a, b: wrap64(a - b),
+    "wrapping_mul": lambda a, b: wrap64(a * b),
+    "wrapping_shl": lambda a, n: wrap64(a << (n & 63)),
+    "wrapping_shr": lambda a, n: a >> (n & 63),
+}
+WRAP1 = {
+    "wrapping_neg": lambda a: wrap64(-a),
+    "wrapping_abs": lambda a: wrap64(abs(a)),
+}
+# `@caller_location` functions (they panic on a zero divisor or a negative
+# exponent, which the generator never gives them): no function-value form.
+WRAP_PANICKY = ("wrapping_div", "wrapping_rem", "wrapping_pow")
+FN_VALUES = sorted(WRAP2) + sorted(WRAP1)
+WRAP_LITS = [63, 64, 65, -64, 31, 33, 6364136223846793005, 1099511628211, MIN + 1, MAX]
+HASH_K = [2, 3, 31, 33, 1099511628211, 6364136223846793005, MAX, -1]
+
+
+def wrap64(x):
+    x &= (1 << 64) - 1
+    return x - (1 << 64) if x > MAX else x
+
+
+def tdiv(a, b):
+    q = abs(a) // abs(b)
+    return q if (a >= 0) == (b >= 0) else -q
+
+
 class Gen:
-    def __init__(self, rnd):
+    def __init__(self, rnd, wrap=0.0):
         self.r = rnd
         self.ctr = 0
+        # The share of operations that are wrapping calls. 0 (the overflow
+        # oracle) draws nothing extra, so its seeds keep their programs.
+        self.wrap = wrap
 
     def lit(self):
         return ("lit", self.r.choice(LITS))
@@ -85,6 +126,8 @@ class Gen:
                 return self.var()
             return self.lit()
         need_var = True  # an all-literal operation is folded at compile time (E076)
+        if self.wrap and r.random() < self.wrap:
+            return self.wcall(d)
         k = r.random()
         if k < 0.12:
             return ("neg", self.expr(d - 1))
@@ -99,6 +142,71 @@ class Gen:
         left_var = r.random() < 0.5
         return ("bin", op, self.expr(d - 1, left_var), self.expr(d - 1, not left_var))
 
+    def warg(self, d):
+        r = self.r
+        k = r.random()
+        if k < 0.08:
+            # MIN has no literal (its magnitude does not fit); this folds to it
+            return ("bin", "-", ("lit", -MAX), ("lit", 1))
+        if k < 0.3:
+            return ("lit", r.choice(WRAP_LITS + LITS))
+        # A wrapping call is never folded at compile time, so its operands
+        # may all be literals.
+        return self.expr(d - 1, r.random() < 0.5)
+
+    def wcall(self, d):
+        """("wcall", name, form, args). form: 0 `math::f(a, b)`, 1 `f(a, b)`,
+        2 `(a).f(b)` (UFCS), 3 `fv_f(a, b)` through a function value."""
+        r = self.r
+        k = r.random()
+        if k < 0.6:
+            name = r.choice(sorted(WRAP2))
+            args = [self.warg(d), self.warg(d)]
+        elif k < 0.75:
+            name = r.choice(sorted(WRAP1))
+            args = [self.warg(d)]
+        elif k < 0.9:
+            name = r.choice(["wrapping_div", "wrapping_rem"])
+            # never a zero divisor; -1 is the one wrapping case (MIN / -1)
+            dv = ("bin", "+", ("bin", "%", self.expr(d - 1), ("lit", 7)), ("lit", 8)) \
+                if r.random() < 0.4 else ("lit", r.choice([1, -1, -1, 2, 3, 7, -7]))
+            args = [self.warg(d), dv]
+        else:
+            name = "wrapping_pow"
+            args = [self.warg(d), ("lit", r.randint(0, 70))]
+        form = r.randrange(3 if name in WRAP_PANICKY else 4)
+        return ("wcall", name, form, args)
+
+    def hashloop(self, v):
+        """A loop-carried hash: `v` is multiplied, shifted and added modulo
+        2^64 many times, then used where a check must stay. Nothing about the
+        loop bounds `v`; a range analysis that thinks otherwise removes the
+        check. As an `if true` block so it nests anywhere."""
+        r = self.r
+        self.ctr += 1
+        step = ("assign", v, ("wcall", r.choice(["wrapping_mul", "wrapping_add", "wrapping_shl"]),
+                              r.randrange(4), [("var", v), ("lit", r.choice(HASH_K))]))
+        mix = r.choice([
+            ("assign", v, ("wcall", "wrapping_add", r.randrange(4),
+                           [("var", v), ("var", r.randrange(NV))])),
+            ("assign", v, ("wcall", "wrapping_shr", r.randrange(4), [("var", v), ("lit", 7)])),
+            ("assign", v, ("wcall", "wrapping_neg", r.randrange(4), [("var", v)])),
+            ("post", v, r.choice("+-")),
+            ("compound", v, r.choice("+-"), ("lit", 1)),
+        ])
+        body = [step, mix] if r.random() < 0.5 else [mix, step]
+        show = ("print", ("var", v))  # the hash itself, before a use can trap
+        use = r.choice([
+            ("print", ("bin", r.choice("+-*"), ("var", v), ("lit", r.choice([1, 2, -1, MAX])))),
+            ("aidx", v),
+            ("compound", v, r.choice("+-*"), ("lit", r.choice([1, 2, 3]))),
+            ("post", v, r.choice("+-")),
+            ("print", ("neg", ("var", v))),
+        ])
+        first = ("assign", v, ("lit", r.choice(LITS)))
+        return ("if", ("cmp", "==", ("var", v), ("var", v)),
+                [first, ("while", self.ctr, r.randint(1, 70), body), show, use], None)
+
     def cond(self):
         return ("cmp", self.r.choice(["<", "<=", ">", ">=", "==", "!="]), self.expr(2),
                 self.expr(1, False))
@@ -112,6 +220,17 @@ class Gen:
         v = r.randrange(NV)
         if d > 0 and k < 0.1:
             return self.pattern(v)
+        if self.wrap:
+            k = r.random()
+            if d > 0 and k < 0.08:
+                return self.hashloop(v)
+            # A wrapped value printed or stored as it is: a statement that
+            # cannot trap unless its operands do, so a wrong wrapped value
+            # shows in the output before the program's first trap.
+            if k < 0.4:
+                return ("print", self.wcall(2))
+            if k < 0.5:
+                return ("assign", v, self.wcall(2))
         k = r.random()
         if k < 0.12:
             return ("assign", v, self.lit())  # a constant the dataflow may track
@@ -181,6 +300,12 @@ def pe(e):
         return "(%s %s %s)" % (pe(e[2]), e[1], pe(e[3]))
     if t == "cmp":
         return "%s %s %s" % (pe(e[2]), e[1], pe(e[3]))
+    if t == "wcall":
+        name, form, args = e[1], e[2], [pe(a) for a in e[3]]
+        if form == 2:
+            return "(%s).%s(%s)" % (args[0], name, ", ".join(args[1:]))
+        callee = {0: "math::" + name, 1: name, 3: "fv_" + name}[form]
+        return "%s(%s)" % (callee, ", ".join(args))
     raise ValueError(t)
 
 
@@ -277,6 +402,20 @@ class Interp:
             a, b = self.ev(e[2]), self.ev(e[3])
             return {"<": a < b, "<=": a <= b, ">": a > b, ">=": a >= b,
                     "==": a == b, "!=": a != b}[e[1]]
+        if t == "wcall":
+            name = e[1]
+            args = [self.ev(a) for a in e[3]]  # left to right, receiver first
+            if name in WRAP2:
+                return WRAP2[name](*args)
+            if name in WRAP1:
+                return WRAP1[name](*args)
+            a, b = args
+            if name == "wrapping_pow":
+                return wrap64(pow(a, b, 1 << 64))
+            if name == "wrapping_div":  # MIN / -1 is MIN
+                return wrap64(-a) if b == -1 else tdiv(a, b)
+            r = abs(a) % abs(b)  # wrapping_rem: the sign of a; MIN % -1 is 0
+            return r if a >= 0 else -r
         raise ValueError(t)
 
     def block(self, ss):
@@ -339,18 +478,21 @@ class Interp:
                     break
 
 
-def build(seed):
+def build(seed, wrap=0.0):
     """(source, expected stdout lines, expected trap or None, index lines)"""
     rnd = random.Random(seed)
-    g = Gen(rnd)
+    g = Gen(rnd, wrap)
     init = [rnd.choice(LITS) for _ in range(NV)]
     body = g.stmts(3, rnd.randint(4, 10))
     pr = Printer()
-    for line in ["// turf-fuzz overflow oracle: seed=%d" % seed,
+    for line in ["// turf-fuzz %s oracle: seed=%d" % ("wrapping" if wrap else "overflow", seed),
                  "fn id(x: int): int {", "    return x;", "}",
                  "fn setv(p: &int, x: int): void {", "    p[0] = x;", "}",
                  "fn main(): int {"]:
         pr.emit(0, line)
+    if wrap:
+        for name in FN_VALUES:
+            pr.emit(1, "immut fv_%s = %s;" % (name, name))
     for i, v in enumerate(init):
         pr.emit(1, "mut v%d: int = %s;" % (i, pe(("lit", v))))
     pr.emit(1, "mut arr: int[%d] = [%s];" % (len(ARR), ", ".join(map(str, ARR))))
@@ -380,10 +522,10 @@ def trap_kind(msg):
         "bounds" if "bounds" in m else msg
 
 
-def verdict(seed, workdir):
+def verdict(seed, workdir, wrap=0.0):
     """None, or (class, kind, details) for the first configuration that
     disagrees with the interpreter."""
-    src, out, trap, inrange = build(seed)
+    src, out, trap, inrange = build(seed, wrap)
     with open(os.path.join(workdir, "prog.tr"), "w") as f:
         f.write(src)
     runs = {}
@@ -418,14 +560,15 @@ def verdict(seed, workdir):
 
 
 class Recorder:
-    def __init__(self, findings_dir):
+    def __init__(self, findings_dir, oracle="overflow"):
         self.dir = findings_dir
+        self.oracle = oracle
         self.lock = threading.Lock()
         self.new = []
 
     def record(self, seed, cls, kind, details):
         src, out, trap, runs = details
-        d = os.path.join(self.dir, cls, "overflow-" + kind)
+        d = os.path.join(self.dir, cls, self.oracle + "-" + kind)
         meta_path = os.path.join(d, "meta.json")
         with self.lock:
             if os.path.exists(meta_path):
@@ -445,18 +588,18 @@ class Recorder:
                 f.write(text)
         shutil.copy(os.path.join(ROOT, "compiler.lock"), os.path.join(d, "compiler.lock"))
         json.dump({
-            "class": cls, "signature": "overflow oracle: " + kind,
+            "class": cls, "signature": "%s oracle: %s" % (self.oracle, kind),
             "summary": "expected %s; %s" % ("trap %s at line %d" % trap if trap else "no trap",
                                             ", ".join(sorted(runs))),
             "seed": seed, "last_seed": seed, "count": 1,
             "compiler_lock_commit": D.lock_commit(), "compiler_tree_head": D.tree_head(),
             "found": datetime.datetime.now().isoformat(timespec="seconds"),
-            "reproduce": "python3 oracles/overflow.py --replay %d" % seed,
+            "reproduce": "python3 oracles/%s.py --replay %d" % (self.oracle, seed),
         }, open(meta_path, "w"), indent=2)
         return True
 
 
-def main():
+def main(oracle="overflow", wrap=0.0):
     ap = argparse.ArgumentParser()
     ap.add_argument("--seconds", type=float, default=300)
     ap.add_argument("--jobs", type=int, default=4)
@@ -466,15 +609,15 @@ def main():
     a = ap.parse_args()
 
     if a.replay is not None:
-        src, out, trap, _ = build(a.replay)
+        src, out, trap, _ = build(a.replay, wrap)
         print(src)
         print("// expected: trap %s, stdout %s" % (trap, out))
         with tempfile.TemporaryDirectory() as wd:
-            v = verdict(a.replay, wd)
-        print("verdict:", "ok" if v is None else "%s/overflow-%s" % (v[0], v[1]))
+            v = verdict(a.replay, wd, wrap)
+        print("verdict:", "ok" if v is None else "%s/%s-%s" % (v[0], oracle, v[1]))
         return
 
-    rec = Recorder(a.findings)
+    rec = Recorder(a.findings, oracle)
     deadline = time.time() + a.seconds
     lock = threading.Lock()
     state = {"next": a.seed, "done": 0, "bad": 0}
@@ -485,20 +628,20 @@ def main():
                 seed = state["next"]
                 state["next"] += 1
             with tempfile.TemporaryDirectory() as wd:
-                v = verdict(seed, wd)
+                v = verdict(seed, wd, wrap)
             with lock:
                 state["done"] += 1
             if v:
                 with lock:
                     state["bad"] += 1
                 if rec.record(seed, *v):
-                    print("NEW %s/overflow-%s seed %d" % (v[0], v[1], seed), flush=True)
+                    print("NEW %s/%s-%s seed %d" % (v[0], oracle, v[1], seed), flush=True)
 
     with ThreadPoolExecutor(min(a.jobs, 8)) as ex:
         for f in [ex.submit(worker) for _ in range(min(a.jobs, 8))]:
             f.result()
-    print("overflow: %d programs in %ds, %d mismatch(es), %d new finding(s); seed %d"
-          % (state["done"], a.seconds, state["bad"], len(rec.new), a.seed))
+    print("%s: %d programs in %ds, %d mismatch(es), %d new finding(s); seed %d"
+          % (oracle, state["done"], a.seconds, state["bad"], len(rec.new), a.seed))
 
 
 if __name__ == "__main__":

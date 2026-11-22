@@ -1,0 +1,7 @@
+fn<T, N: size> bad(v: T): T[N] {
+    defer[N] = v;
+}
+fn main(): int {
+    mut a: int[2] = bad(1);
+}
+

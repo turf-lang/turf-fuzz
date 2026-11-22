@@ -790,6 +790,9 @@ class Program:
         self.payload_errors = []
         self.enums = enums or []    # [EnumT]
         self.gstructs = []          # names of generic struct templates (`Gb0`)
+        # base -> the line of `self.n = self.n + 1;` in its `put`, where an
+        # overflow of `n` traps (set by render())
+        self.gput_n_line = {}
         self.structs = structs
         self.funcs = funcs
         self.main = main
@@ -1211,7 +1214,9 @@ class _Renderer:
                          "fn<T> %s.put(x: T): void {" % base,
                          "    self.v = x;", "    self.n = self.n + 1;", "}", "",
                          "fn<T> %s.get(): T {" % base, "    return self.v;", "}", ""):
-                self.emit(0, line)
+                at = self.emit(0, line)
+                if line == "    self.n = self.n + 1;":
+                    self.p.gput_n_line[base] = at
         for st in self.p.structs:
             self.emit(0, "struct %s { %s }" % (st.name, ", ".join(
                 "%s: %s" % (n, ty_str(t)) for n, t in st.fields)))

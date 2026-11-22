@@ -1,0 +1,7 @@
+import test;
+import visibility_lib_module;
+fn main(): int {
+    test::assert(visibility_lib_module::wrap_generic(continue) == 46,
+        "second instantiation of the same pub generic");
+}
+
