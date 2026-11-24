@@ -1,0 +1,3 @@
+    mut total: int = 0"\
+
+    mut d: double = 1e3;
